@@ -1,0 +1,79 @@
+.TH redirect 8 "23 September 1995"
+.SH NAME
+redirect - simple redirection CGI program
+.SH SYNOPSIS
+.B redirect
+.SH DESCRIPTION
+.PP
+Three steps to set up a redirection:
+.PP
+1. Make sure your web server is set up to allow CGI programs.
+.PP
+2. Make a symbolic link from the file or directory you want to redirect,
+pointing at this program in the CGI bin directory.
+.PP
+3. Add an entry to the file ".redirects" in the directory where your
+http server runs CGI programs.  For most servers, this is the
+directory where the given CGI program lives.  The format of the
+file is a bunch of lines with a filename, whitespace, and the new
+URL.  For example:
+.nf
+  /test/oldfile.html    http://www.acme.com/test/newfile.html
+.fi
+The easiest way to figure out precisely what filename to put into .redirects
+is to set up the symlink and then click on it.
+You'll get back a "404 Not Found" page which includes the filename
+as received by the redirect program, and that's what you want to use.
+.PP
+You can also add a wildcard specification to redirect whole groups of files.
+For example:
+.nf
+  /wildtest/*          http://www.acme.com/test-
+.fi
+will cause an access to the /wildtest/somefile.html to be redirected to
+http://www.acme.com/test-somefile.html. (Note that the asterisk need not
+be preceded by a slash.)
+.PP
+Note: this is designed for thttpd (http://www.acme.com/software/thttpd/)
+and using it with other web servers may require some hacking.  A possible
+gotcha is with the symbolic link from the old file pointing at this
+script - servers other than thttpd may not allow that link to be run
+as a CGI program, because they don't check the link to see that it
+points into the allowed CGI directory.
+.SH "SEE ALSO"
+thttpd(8)
+.SH "BUGS / DEFICIENCIES"
+.PP
+It would be really cool to have this program look for
+the .redirects file in the same directory as the file being redirected,
+instead of in the binaries directory.  Unfortunately, this appears
+to be impossible with the information CGI gives, plus the non-standardized
+but widespread practice of running CGI programs in the directory where
+the binary lives.  Perhaps CGI 1.2 will address this.
+.PP
+The wildcard mechanism is very primitive.
+In particular, any characters that follow the asterisk are blithely
+ignored.
+.SH AUTHOR
+Copyright © 1995 by Jef Poskanzer <jef@mail.acme.com>.
+All rights reserved.
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\" 
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.

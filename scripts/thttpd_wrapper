@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# thttpd_wrapper - wrapper script for thttpd on FreeBSD
+#
+# This goes in /usr/local/sbin.  It runs thttpd in a loop.  If thttpd
+# exits then the script restarts it automatically.
+#
+# The -D flag tells thttpd to *not* put itself into the background,
+# and the -C flag tells it to get the rest of its configuration from
+# the specified config file.
+
+while true ; do
+    /usr/local/sbin/thttpd -D -C /usr/local/www/thttpd_config
+    if [ -f /var/run/nologin ] ; then
+	exit
+    fi
+    sleep 10
+    egrep ' thttpd\[' /var/log/messages |
+      tail -33 |
+      mail -s "thttpd on `hostname` restarted" root
+done

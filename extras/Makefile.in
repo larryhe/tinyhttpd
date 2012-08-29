@@ -1,0 +1,86 @@
+# Makefile for extras.
+#
+# Copyright © 1995,1998 by Jef Poskanzer <jef@mail.acme.com>.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+prefix =	@prefix@
+exec_prefix =	@exec_prefix@
+BINDIR =	@sbindir@
+WEBDIR =	$(prefix)/www
+CGIBINDIR =	$(WEBDIR)/cgi-bin
+MANDIR =	@mandir@
+
+CC =		@CC@
+CCOPT =		@V_CCOPT@
+DEFS =		@DEFS@
+INCLS =		-I..
+CFLAGS =	$(CCOPT) $(DEFS) $(INCLS)
+STATICFLAG =	@V_STATICFLAG@
+LDFLAGS =	@LDFLAGS@
+LIBS =		@LIBS@
+NETLIBS =	@V_NETLIBS@
+INSTALL =	@INSTALL@
+
+CLEANFILES =	*.o makeweb htpasswd
+
+@SET_MAKE@
+
+.c.o:
+	@rm -f $@
+	$(CC) $(CFLAGS) -c $*.c
+
+all:		makeweb htpasswd
+
+makeweb:	makeweb.o
+	$(CC) $(LDFLAGS) makeweb.o -o makeweb $(LIBS) $(NETLIBS)
+
+makeweb.o:	makeweb.c ../config.h
+	$(CC) $(CFLAGS) -DWEBDIR=\"$(WEBDIR)\" -c makeweb.c
+
+htpasswd:	htpasswd.o
+	$(CC) $(LDFLAGS) $(STATICFLAG) htpasswd.o -o htpasswd $(LIBS)
+
+htpasswd.o:	htpasswd.c ../config.h
+	$(CC) $(CFLAGS) -DWEBDIR=\"$(WEBDIR)\" -c htpasswd.c
+
+
+install:	all
+	rm -f $(BINDIR)/makeweb $(BINDIR)/htpasswd $(BINDIR)/syslogtocern
+	cp makeweb $(BINDIR)/makeweb
+	chgrp $(WEBGROUP) $(BINDIR)/makeweb
+	chmod 2755 $(BINDIR)/makeweb
+	cp htpasswd $(BINDIR)/htpasswd
+	cp syslogtocern $(BINDIR)/syslogtocern
+	rm -f $(MANDIR)/man1/makeweb.1
+	cp makeweb.1 $(MANDIR)/man1/makeweb.1
+	rm -f $(MANDIR)/man1/htpasswd.1
+	cp htpasswd.1 $(MANDIR)/man1/htpasswd.1
+	rm -f $(MANDIR)/man8/syslogtocern.8
+	cp syslogtocern.8 $(MANDIR)/man8/syslogtocern.8
+
+clean:
+	rm -f $(CLEANFILES)
+
+distclean:
+	rm -f $(CLEANFILES) Makefile

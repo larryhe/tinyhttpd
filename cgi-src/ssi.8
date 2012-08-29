@@ -1,0 +1,142 @@
+.TH ssi 8 "18 October 1995"
+.SH NAME
+ssi - server-side-includes CGI program
+.SH SYNOPSIS
+.B ssi
+.SH DESCRIPTION
+.PP
+This is an external CGI program that gives you the same functionality
+as the built-in server-side-includes feature in some HTTP daemons.
+It is written for use with thttpd(8), but should be easy to adapt
+to other systems.
+.PP
+To use this program, first make sure it is installed in your server's
+CGI area, and that CGI is enabled.
+Then set up your URLs with the path to the document you want parsed
+as the "pathinfo".
+That's the part of the URL that comes after the CGI program name.
+For example, if the URL to this program is:
+.nf
+  http://www.acme.com/cgi-bin/ssi
+.fi
+and the url for your document is:
+.nf
+  http://www.acme.com/users/wecoyote/doc.html
+.fi
+then the compound URL that gives you the document filtered through the
+program would be:
+.nf
+  http://www.acme.com/cgi-bin/ssi/users/wecoyote/doc.html
+.fi
+.PP
+The format description below is adapted from
+http://hoohoo.ncsa.uiuc.edu/docs/tutorials/includes.html
+.SH "INCLUDE FORMAT"
+.PP
+All directives are formatted as SGML comments within the document.
+This is in case the document should ever find itself in the client's
+hands unparsed.
+Each directive has the following format:
+.nf
+  <!--#command tag1="value1" tag2="value2" -->
+.fi
+Each command takes different arguments, most only accept one tag at a time.
+Here is a breakdown of the commands and their associated tags:
+.IP * 4
+.BR config :
+The config directive controls various aspects of the file parsing.
+There are two valid tags:
+.IP o 8
+.BR timefmt :
+gives the server a new format to use when providing dates.
+This is a string compatible with the strftime library call.
+.IP o 8
+.BR sizefmt :
+determines the formatting to be used when displaying the
+size of a file.
+Valid choices are bytes, for a formatted byte count
+(formatted as 1,234,567), or abbrev for an abbreviated version
+displaying the number of kilobytes or megabytes the file occupies.
+.IP * 4
+.BR include :
+Inserts the text of another document into the parsed document.
+The inserted file is parsed recursively, so it can contain
+server-side-include directives too.
+This command accepts two tags:
+.IP o 8
+.BR virtual :
+Gives a virtual path to a document on the server.
+.IP o 8
+.BR file :
+Gives a pathname relative to the current directory. ../ cannot
+be used in this pathname, nor can absolute paths be used.
+.IP * 4
+.BR echo :
+Prints the value of one of the include variables (defined below).
+Any dates are printed subject to the currently configured timefmt.
+The only valid tag to this command is var, whose value is the name of the
+variable you wish to echo.
+.IP * 4
+.BR fsize :
+prints the size of the specified file,
+subject to the sizefmt parameter to the config command.
+Valid tags are the same as with the include command.
+.IP * 4
+.BR flastmod :
+prints the last modification date of the specified file, subject
+to the formatting preference given by the timefmt parameter to config.
+Valid tags are the same as with the include command.
+.SH VARIABLES
+.PP
+A number of variables are made available to parsed documents.
+In addition to
+the CGI variable set, the following variables are made available:
+.IP * 4
+.BR DOCUMENT_NAME :
+The current filename.
+.IP * 4
+.BR DOCUMENT_URI :
+The virtual path to this document (such as /~robm/foo.shtml).
+.IP * 4
+.BR QUERY_STRING_UNESCAPED :
+The unescaped version of any search query the client sent.
+.IP * 4
+.BR DATE_LOCAL :
+The current date, local time zone.
+Subject to the timefmt parameter to the config command.
+.IP * 4
+.BR DATE_GMT :
+Same as DATE_LOCAL but in Greenwich mean time.
+.IP * 4
+.BR LAST_MODIFIED :
+The last modification date of the current document.
+Subject to timefmt like the others.
+.SH "BUGS / DEFICIENCIES"
+.PP
+Does not implement the "exec" directive.
+Actually, I consider this neither a bug nor a deficiency, but some may.
+.SH "SEE ALSO"
+thttpd(8), strftime(3)
+.SH AUTHOR
+Copyright © 1995 by Jef Poskanzer <jef@mail.acme.com>.
+All rights reserved.
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\" 
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.

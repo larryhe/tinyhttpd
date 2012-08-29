@@ -1,0 +1,40 @@
+To build:
+
+    % ./configure
+
+    Edit config.h to change the configuration options if necessary.
+
+    % make
+
+
+To install:
+
+    % make install
+
+    Edit one of your system rc files to run thttpd at boot time.  Do NOT
+    run it from inetd, that setup is inefficient so thttpd doesn't support it.
+
+
+Red Hat:
+
+    On Red Hat Linux systems you can use RPM to install thttpd, like so:
+
+	cd /usr/src/redhat/SOURCES
+	wget http://www.acme.com/software/thttpd/thttpd-2.25b.tar.gz
+	rpm -ta thttpd-2.25b.tar.gz
+	rpm -i /usr/src/redhat/RPMS/i386/thttpd-2.25b-1.i386.rpm
+
+
+Solaris:
+
+    If you're running Solaris and you want to use the security-enhancing
+    chroot feature, then you must create the TCP device files in the chroot
+    tree.  There is no way around this, Solaris needs these files to accept
+    network connections.  You need /dev/tcp, which is a symbolic link like so:
+	/dev/tcp -> ../devices/pseudo/clone@0:tcp
+    And you also need the file it points to:
+	crw-rw-rw-  bin  11, 42 May 24 21:32 /devices/pseudo/clone@0:tcp
+    You probably need some other files too, such as shared libraries and
+    a tmp directory.  Check out the man page for ftpd, it has a big long
+    shell script for setting up an anonymous ftp area that should also
+    work for thttpd.

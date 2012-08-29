@@ -1,0 +1,68 @@
+#!/bin/sh
+#
+# syslogtocern - convert thttpd syslog entries into CERN Combined Log Format
+#
+# Copyright © 1995,1998 by Jef Poskanzer <jef@mail.acme.com>.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+if [ $# -lt 1 ] ; then
+    echo "usage:  $0 logfile ..." >&2
+    exit 1
+fi
+
+tmp1=/tmp/stc1.$$
+rm -f $tmp1
+
+# Gather up all the thttpd entries.
+egrep -h ' thttpd\[' "$@" > $tmp1
+
+# Figure out the current year - it's not in syslog's output.  Some versions
+# of date have the %Y directive to give the full four-digit year, but others
+# only have %y.
+year=`date +%y`
+if [ $year -gt 70 ] ; then
+    year=19$year
+else
+    year=20$year
+fi
+
+# If the current year isn't the year that the logfile was generated, we need
+# to fix it.  This will most likely happen once a year, when this script is
+# run on January 1st for December 31st's logfile.  So, if the current month
+# is January and there are December dates in the log file, we subtract one.
+# This should cover most cases.
+if [ `date +%m` -eq 1 -a `head -1 $tmp1 | awk '{print $1}'` = "Dec" ] ; then
+    year=`echo $year - 1 | bc`
+fi
+
+# Do access_log.
+awk < $tmp1 '{if ( NF >= 15 && $7 == "-" && $12 >= 100 && $12 < 510) print;}' |
+  sed -e "s,\([A-Z][a-z][a-z]\) \([0-9 ][0-9]\) \([0-9][0-9]:[0-9][0-9]:[0-9][0-9]\) [^ ]* thttpd\[[0-9]*\]: \([^ ]* [^ ]* [^ ]*\) \(.*\),\4 [\2/\1/${year}:\3] \5," -e 's,\[ ,[0,' > access_log
+
+# Do error_log.
+awk < $tmp1 '{if ( ! ( NF >= 15 && $7 == "-" && $12 >= 100 && $12 < 510) ) print;}' |
+  sed -e "s,\([A-Z][a-z][a-z] [0-9 ][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]\) [^ ]* thttpd\[[0-9]*\]: \(.*\),[\1 ${year}] \2," > error_log
+
+# Done.
+rm -f $tmp1

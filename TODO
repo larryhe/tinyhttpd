@@ -1,0 +1,80 @@
+- - - - - - - - - - high priority - - - - - - - - - -
+
+IPv6 not working right.
+
+Problem with ACME News downloads.  PATH_INFO interferes with the authorization.
+
+Why is the client's IP address showing up in paths?
+
+Fetches with numeric IP addresses and no Host: header are screwing up the
+vhost code?
+143.90.193.229 - - [06/Apr/2000:09:21:34 -0700] "GET /209.133.38.22/software/thttpd/ HTTP/1.0" 200 12093 "http://www.dbphotography.demon.co.uk/index.html" "Mozilla/1.22 (compatible; MSIE 2.0; Windows 95)"
+143.90.193.229 - - [06/Apr/2000:09:21:37 -0700] "GET /143.90.193.229/software/thttpd/anvil_thttpd.gif HTTP/1.0" 403 - "http://www.acme.com/software/thttpd/" "Mozilla/1.22 (compatible; MSIE 2.0; Windows 95)"
+
+Have directory indexing skip files that start with dot?  Except ..?
+In libhttpd.c:
++               if (*(de->d_name) == '.' && *(de->d_name+1) != '.')
++                   continue;
+                namlen = NAMLEN(de);
+
+Add comment on INDEX_NAMES that it should be simple filenames only.
+
+The error page generated for non-local referers should include the
+original URL as an active link.
+
+Make open in mmc.c use O_NONBLOCK flag, to prevent DOS attack via
+a named pipe?
+
+- - - - - - - - - - later - - - - - - - - - -
+
+Document how symlinks interact with .htpasswd - authorization is checked
+on the result of the symlink, and not the origin.
+
+SIGHUP log re-opening doesn't work if you started as root.
+
+Change redirect to put the Refresh command in the HTTP headers, instead of
+a META tag.
+
+Add TCP_NODELAY, but after CGIs get spawned.
+
+Add stat cache?  1 minute expiry?
+
+Ifdef the un-close-on-exec CGI thing for Linux only.
+
+Add keep-alives, via a new state in thttpd.c.
+
+- - - - - - - - - - someday - - - - - - - - - -
+
+The special world-permissions checking is probably bogus.  For one
+thing, it doesn't handle restrictive permissions on parent directories
+properly.  It should probably just go away.
+
+redirect should interpret a path with a trailing / as /index.html
+
+ssi should change $cwd to the source document's location.
+
+Allow .throttle files in individual directories.
+
+Log-digesting scripts.
+
+Config web page.
+    Common errors:
+	Not realizing that -c overrides CGI_PATTERN instead of augmenting it.
+	Using a directory name for the -c pattern.
+
+- - - - - - - - - - 3.x - - - - - - - - - -
+
+Tasklets re-write.
+
+- - - - - - - - - - general - - - - - - - - - -
+
+Release process:
+  - update version number in version.h README INSTALL and
+    contrib/redhat-rpm/thttpd.spec
+  - do a tdiff and update the local installation
+  - do an rcstreeinfo, and check in all files
+  - make tar
+  - mv it to ..
+  - update version number in ../thttpd.html
+  - update ~acmeweb/updates.html
+  - mail announcement to thttpd-announce

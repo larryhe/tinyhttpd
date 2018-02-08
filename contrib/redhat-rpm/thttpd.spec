@@ -1,6 +1,6 @@
 Summary: Throttleable lightweight httpd server
 Name: thttpd
-Version: 2.25b
+Version: 2.28
 Release: 1
 Group: Networking
 URL: http://www.acme.com/software/thttpd
@@ -63,6 +63,9 @@ rm -rf $RPM_BUILD_ROOT
 %doc /usr/man/man*/*
 
 %changelog
+
+* Mon Dec 29 2003 Jef Poskanzer <jef@mail.acme.com>
+  - Updated to 2.26
 
 * Sat Dec 20 2003 Jef Poskanzer <jef@mail.acme.com>
   - Updated to 2.25b

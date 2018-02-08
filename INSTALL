@@ -20,9 +20,9 @@ Red Hat:
     On Red Hat Linux systems you can use RPM to install thttpd, like so:
 
 	cd /usr/src/redhat/SOURCES
-	wget http://www.acme.com/software/thttpd/thttpd-2.26.tar.gz
-	rpm -ta thttpd-2.26.tar.gz
-	rpm -i /usr/src/redhat/RPMS/i386/thttpd-2.26-1.i386.rpm
+	wget http://www.acme.com/software/thttpd/thttpd-2.28.tar.gz
+	rpm -ta thttpd-2.28.tar.gz
+	rpm -i /usr/src/redhat/RPMS/i386/thttpd-2.28-1.i386.rpm
 
 
 Solaris:

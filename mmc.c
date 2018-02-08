@@ -523,9 +523,9 @@ void
 mmc_logstats( long secs )
     {
     syslog(
-	LOG_NOTICE, "  map cache - %d allocated, %d active (%lld bytes), %d free; hash size: %d; expire age: %ld",
+	LOG_NOTICE, "  map cache - %d allocated, %d active (%lld bytes), %d free; hash size: %d; expire age: %lld",
 	alloc_count, map_count, (long long) mapped_bytes, free_count, hash_size,
-	expire_age );
+	(long long) expire_age );
     if ( map_count + free_count != alloc_count )
 	syslog( LOG_ERR, "map counts don't add up!" );
     }

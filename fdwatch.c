@@ -79,14 +79,14 @@ static int nreturned, next_ridx;
 #ifdef HAVE_KQUEUE
 
 #define WHICH                  "kevent"
-#define INIT( nfiles )         kqueue_init( nfiles )
+#define INIT( nf )         kqueue_init( nf )
 #define ADD_FD( fd, rw )       kqueue_add_fd( fd, rw )
 #define DEL_FD( fd )           kqueue_del_fd( fd )
 #define WATCH( timeout_msecs ) kqueue_watch( timeout_msecs )
 #define CHECK_FD( fd )         kqueue_check_fd( fd )
 #define GET_FD( ridx )         kqueue_get_fd( ridx )
 
-static int kqueue_init( int nfiles );
+static int kqueue_init( int nf );
 static void kqueue_add_fd( int fd, int rw );
 static void kqueue_del_fd( int fd );
 static int kqueue_watch( long timeout_msecs );
@@ -97,14 +97,14 @@ static int kqueue_get_fd( int ridx );
 # ifdef HAVE_DEVPOLL
 
 #define WHICH                  "devpoll"
-#define INIT( nfiles )         devpoll_init( nfiles )
+#define INIT( nf )         devpoll_init( nf )
 #define ADD_FD( fd, rw )       devpoll_add_fd( fd, rw )
 #define DEL_FD( fd )           devpoll_del_fd( fd )
 #define WATCH( timeout_msecs ) devpoll_watch( timeout_msecs )
 #define CHECK_FD( fd )         devpoll_check_fd( fd )
 #define GET_FD( ridx )         devpoll_get_fd( ridx )
 
-static int devpoll_init( int nfiles );
+static int devpoll_init( int nf );
 static void devpoll_add_fd( int fd, int rw );
 static void devpoll_del_fd( int fd );
 static int devpoll_watch( long timeout_msecs );
@@ -115,14 +115,14 @@ static int devpoll_get_fd( int ridx );
 #  ifdef HAVE_POLL
 
 #define WHICH                  "poll"
-#define INIT( nfiles )         poll_init( nfiles )
+#define INIT( nf )         poll_init( nf )
 #define ADD_FD( fd, rw )       poll_add_fd( fd, rw )
 #define DEL_FD( fd )           poll_del_fd( fd )
 #define WATCH( timeout_msecs ) poll_watch( timeout_msecs )
 #define CHECK_FD( fd )         poll_check_fd( fd )
 #define GET_FD( ridx )         poll_get_fd( ridx )
 
-static int poll_init( int nfiles );
+static int poll_init( int nf );
 static void poll_add_fd( int fd, int rw );
 static void poll_del_fd( int fd );
 static int poll_watch( long timeout_msecs );
@@ -133,14 +133,14 @@ static int poll_get_fd( int ridx );
 #   ifdef HAVE_SELECT
 
 #define WHICH                  "select"
-#define INIT( nfiles )         select_init( nfiles )
+#define INIT( nf )         select_init( nf )
 #define ADD_FD( fd, rw )       select_add_fd( fd, rw )
 #define DEL_FD( fd )           select_del_fd( fd )
 #define WATCH( timeout_msecs ) select_watch( timeout_msecs )
 #define CHECK_FD( fd )         select_check_fd( fd )
 #define GET_FD( ridx )         select_get_fd( ridx )
 
-static int select_init( int nfiles );
+static int select_init( int nf );
 static void select_add_fd( int fd, int rw );
 static void select_del_fd( int fd );
 static int select_watch( long timeout_msecs );
@@ -278,7 +278,7 @@ fdwatch_logstats( long secs )
     {
     if ( secs > 0 )
 	syslog(
-	    LOG_INFO, "  fdwatch - %ld %ss (%g/sec)",
+	    LOG_NOTICE, "  fdwatch - %ld %ss (%g/sec)",
 	    nwatches, WHICH, (float) nwatches / secs );
     nwatches = 0;
     }
@@ -295,20 +295,20 @@ static int kq;
 
 
 static int
-kqueue_init( int nfiles )
+kqueue_init( int nf )
     {
     kq = kqueue();
     if ( kq == -1 )
 	return -1;
-    maxkqevents = nfiles * 2;
+    maxkqevents = nf * 2;
     kqevents = (struct kevent*) malloc( sizeof(struct kevent) * maxkqevents );
-    kqrevents = (struct kevent*) malloc( sizeof(struct kevent) * nfiles );
-    kqrfdidx = (int*) malloc( sizeof(int) * nfiles );
+    kqrevents = (struct kevent*) malloc( sizeof(struct kevent) * nf );
+    kqrfdidx = (int*) malloc( sizeof(int) * nf );
     if ( kqevents == (struct kevent*) 0 || kqrevents == (struct kevent*) 0 ||
 	 kqrfdidx == (int*) 0 )
 	return -1;
     (void) memset( kqevents, 0, sizeof(struct kevent) * maxkqevents );
-    (void) memset( kqrfdidx, 0, sizeof(int) * nfiles );
+    (void) memset( kqrfdidx, 0, sizeof(int) * nf );
     return 0;
     }
 
@@ -428,20 +428,20 @@ static int dp;
 
 
 static int
-devpoll_init( int nfiles )
+devpoll_init( int nf )
     {
     dp = open( "/dev/poll", O_RDWR );
     if ( dp == -1 )
 	return -1;
     (void) fcntl( dp, F_SETFD, 1 );
-    maxdpevents = nfiles * 2;
+    maxdpevents = nf * 2;
     dpevents = (struct pollfd*) malloc( sizeof(struct pollfd) * maxdpevents );
-    dprevents = (struct pollfd*) malloc( sizeof(struct pollfd) * nfiles );
-    dp_rfdidx = (int*) malloc( sizeof(int) * nfiles );
+    dprevents = (struct pollfd*) malloc( sizeof(struct pollfd) * nf );
+    dp_rfdidx = (int*) malloc( sizeof(int) * nf );
     if ( dpevents == (struct pollfd*) 0 || dprevents == (struct pollfd*) 0 ||
 	 dp_rfdidx == (int*) 0 )
 	return -1;
-    (void) memset( dp_rfdidx, 0, sizeof(int) * nfiles );
+    (void) memset( dp_rfdidx, 0, sizeof(int) * nf );
     return 0;
     }
 
@@ -554,17 +554,17 @@ static int* poll_rfdidx;
 
 
 static int
-poll_init( int nfiles )
+poll_init( int nf )
     {
     int i;
 
-    pollfds = (struct pollfd*) malloc( sizeof(struct pollfd) * nfiles );
-    poll_fdidx = (int*) malloc( sizeof(int) * nfiles );
-    poll_rfdidx = (int*) malloc( sizeof(int) * nfiles );
+    pollfds = (struct pollfd*) malloc( sizeof(struct pollfd) * nf );
+    poll_fdidx = (int*) malloc( sizeof(int) * nf );
+    poll_rfdidx = (int*) malloc( sizeof(int) * nf );
     if ( pollfds == (struct pollfd*) 0 || poll_fdidx == (int*) 0 ||
 	 poll_rfdidx == (int*) 0 )
 	return -1;
-    for ( i = 0; i < nfiles; ++i )
+    for ( i = 0; i < nf; ++i )
 	pollfds[i].fd = poll_fdidx[i] = -1;
     return 0;
     }
@@ -681,22 +681,22 @@ static int maxfd_changed;
 
 
 static int
-select_init( int nfiles )
+select_init( int nf )
     {
     int i;
 
     FD_ZERO( &master_rfdset );
     FD_ZERO( &master_wfdset );
-    select_fds = (int*) malloc( sizeof(int) * nfiles );
-    select_fdidx = (int*) malloc( sizeof(int) * nfiles );
-    select_rfdidx = (int*) malloc( sizeof(int) * nfiles );
+    select_fds = (int*) malloc( sizeof(int) * nf );
+    select_fdidx = (int*) malloc( sizeof(int) * nf );
+    select_rfdidx = (int*) malloc( sizeof(int) * nf );
     if ( select_fds == (int*) 0 || select_fdidx == (int*) 0 ||
 	 select_rfdidx == (int*) 0 )
 	return -1;
     nselect_fds = 0;
     maxfd = -1;
     maxfd_changed = 0;
-    for ( i = 0; i < nfiles; ++i )
+    for ( i = 0; i < nf; ++i )
 	select_fds[i] = select_fdidx[i] = -1;
     return 0;
     }

@@ -1,6 +1,6 @@
 /* mmc.c - mmap cache
 **
-** Copyright © 1998,2001 by Jef Poskanzer <jef@mail.acme.com>.
+** Copyright © 1998,2001,2014 by Jef Poskanzer <jef@mail.acme.com>.
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -80,7 +80,7 @@ typedef struct MapStruct {
     ino_t ino;
     dev_t dev;
     off_t size;
-    time_t ctime;
+    time_t ct;
     int refcount;
     time_t reftime;
     void* addr;
@@ -107,8 +107,8 @@ static void panic( void );
 static void really_unmap( Map** mm );
 static int check_hash_size( void );
 static int add_hash( Map* m );
-static Map* find_hash( ino_t ino, dev_t dev, off_t size, time_t ctime );
-static unsigned int hash( ino_t ino, dev_t dev, off_t size, time_t ctime );
+static Map* find_hash( ino_t ino, dev_t dev, off_t size, time_t ct );
+static unsigned int hash( ino_t ino, dev_t dev, off_t size, time_t ct );
 
 
 void*
@@ -183,7 +183,7 @@ mmc_map( char* filename, struct stat* sbP, struct timeval* nowP )
     m->ino = sb.st_ino;
     m->dev = sb.st_dev;
     m->size = sb.st_size;
-    m->ctime = sb.st_ctime;
+    m->ct = sb.st_ctime;
     m->refcount = 1;
     m->reftime = now;
 
@@ -395,7 +395,7 @@ really_unmap( Map** mm )
 
 
 void
-mmc_destroy( void )
+mmc_term( void )
     {
     Map* m;
 
@@ -460,7 +460,7 @@ add_hash( Map* m )
     {
     unsigned int h, he, i;
 
-    h = hash( m->ino, m->dev, m->size, m->ctime );
+    h = hash( m->ino, m->dev, m->size, m->ct );
     he = ( h + hash_size - 1 ) & hash_mask;
     for ( i = h; ; i = ( i + 1 ) & hash_mask )
 	{
@@ -479,12 +479,12 @@ add_hash( Map* m )
 
 
 static Map*
-find_hash( ino_t ino, dev_t dev, off_t size, time_t ctime )
+find_hash( ino_t ino, dev_t dev, off_t size, time_t ct )
     {
     unsigned int h, he, i;
     Map* m;
 
-    h = hash( ino, dev, size, ctime );
+    h = hash( ino, dev, size, ct );
     he = ( h + hash_size - 1 ) & hash_mask;
     for ( i = h; ; i = ( i + 1 ) & hash_mask )
 	{
@@ -492,7 +492,7 @@ find_hash( ino_t ino, dev_t dev, off_t size, time_t ctime )
 	if ( m == (Map*) 0 )
 	    break;
 	if ( m->hash == h && m->ino == ino && m->dev == dev &&
-	     m->size == size && m->ctime == ctime )
+	     m->size == size && m->ct == ct )
 	    return m;
 	if ( i == he )
 	    break;
@@ -502,7 +502,7 @@ find_hash( ino_t ino, dev_t dev, off_t size, time_t ctime )
 
 
 static unsigned int
-hash( ino_t ino, dev_t dev, off_t size, time_t ctime )
+hash( ino_t ino, dev_t dev, off_t size, time_t ct )
     {
     unsigned int h = 177573;
 
@@ -512,7 +512,7 @@ hash( ino_t ino, dev_t dev, off_t size, time_t ctime )
     h += h << 5;
     h ^= size;
     h += h << 5;
-    h ^= ctime;
+    h ^= ct;
 
     return h & hash_mask;
     }
@@ -523,8 +523,8 @@ void
 mmc_logstats( long secs )
     {
     syslog(
-	LOG_INFO, "  map cache - %d allocated, %d active (%lld bytes), %d free; hash size: %d; expire age: %ld",
-	alloc_count, map_count, (int64_t) mapped_bytes, free_count, hash_size,
+	LOG_NOTICE, "  map cache - %d allocated, %d active (%lld bytes), %d free; hash size: %d; expire age: %ld",
+	alloc_count, map_count, (long long) mapped_bytes, free_count, hash_size,
 	expire_age );
     if ( map_count + free_count != alloc_count )
 	syslog( LOG_ERR, "map counts don't add up!" );

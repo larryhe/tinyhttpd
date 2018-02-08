@@ -31,6 +31,6 @@
 /* Simple shell-style filename pattern matcher.  Only does ? * and **, and
 ** multiple patterns separated by |.  Returns 1 or 0.
 */
-extern int match( const char* pattern, const char* string );
+int match( const char* pattern, const char* string );
 
 #endif /* _MATCH_H_ */

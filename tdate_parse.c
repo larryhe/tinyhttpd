@@ -59,12 +59,13 @@ pound_case( char* str )
 	}
     }
 
+
 static int
-strlong_compare( v1, v2 )
-    char* v1;
-    char* v2;
+strlong_compare( const void* v1, const void* v2 )
     {
-    return strcmp( ((struct strlong*) v1)->s, ((struct strlong*) v2)->s );
+    const struct strlong* s1 = (const struct strlong*) v1;
+    const struct strlong* s2 = (const struct strlong*) v2;
+    return strcmp( s1->s, s2->s );
     }
 
 
@@ -170,7 +171,7 @@ tm_to_time( struct tm* tmP )
 
     /* Years since epoch, converted to days. */
     t = ( tmP->tm_year - 70 ) * 365;
-    /* Leap days for previous years. */
+    /* Leap days for previous years - this will break in 2100! */
     t += ( tmP->tm_year - 69 ) / 4;
     /* Days for the beginning of this month. */
     t += monthtab[tmP->tm_mon];

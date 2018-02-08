@@ -57,29 +57,29 @@
 /* Figure out how many file descriptors the system allows, and
 ** initialize the fdwatch data structures.  Returns -1 on failure.
 */
-extern int fdwatch_get_nfiles( void );
+int fdwatch_get_nfiles( void );
 
 /* Add a descriptor to the watch list.  rw is either FDW_READ or FDW_WRITE.  */
-extern void fdwatch_add_fd( int fd, void* client_data, int rw );
+void fdwatch_add_fd( int fd, void* client_data, int rw );
 
 /* Delete a descriptor from the watch list. */
-extern void fdwatch_del_fd( int fd );
+void fdwatch_del_fd( int fd );
 
 /* Do the watch.  Return value is the number of descriptors that are ready,
 ** or 0 if the timeout expired, or -1 on errors.  A timeout of INFTIM means
 ** wait indefinitely.
 */
-extern int fdwatch( long timeout_msecs );
+int fdwatch( long timeout_msecs );
 
 /* Check if a descriptor was ready. */
-extern int fdwatch_check_fd( int fd );
+int fdwatch_check_fd( int fd );
 
 /* Get the client data for the next returned event.  Returns -1 when there
 ** are no more events.
 */
-extern void* fdwatch_get_next_client_data( void );
+void* fdwatch_get_next_client_data( void );
 
 /* Generate debugging statistics syslog message. */
-extern void fdwatch_logstats( long secs );
+void fdwatch_logstats( long secs );
 
 #endif /* _FDWATCH_H_ */

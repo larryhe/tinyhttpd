@@ -219,7 +219,7 @@ check_filename( char* filename )
     char* cp;
     char* dirname;
     char* authname;
-    struct stat sb;
+    struct stat sb2;
     int r;
 
     if ( ! inited )
@@ -263,7 +263,7 @@ check_filename( char* filename )
     if ( authname == (char*) 0 )
 	return 0;	/* out of memory */
     (void) sprintf( authname, "%s/%s", dirname, AUTH_FILE );
-    r = stat( authname, &sb );
+    r = stat( authname, &sb2 );
     free( dirname );
     free( authname );
     if ( r == 0 )

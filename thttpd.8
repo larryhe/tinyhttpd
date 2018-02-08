@@ -153,7 +153,7 @@ The config-file option name for this flag is "pidfile".
 .TP
 .B -T
 Specifies the character set to use with text MIME types.
-The default is iso-8859-1.
+The default is UTF-8.
 The config-file option name for this flag is "charset",
 and the config.h option is DEFAULT_CHARSET.
 .TP
@@ -433,34 +433,34 @@ virtual host's web tree.
 thttpd will look first in the virtual host errors directory, and
 then in the server-wide errors directory, and if neither of those
 has an appropriate error file then it will generate the built-in error.
-.SH "NON-LOCAL REFERERS"
+.SH "NON-LOCAL REFERRERS"
 .PP
 Sometimes another site on the net will embed your image files in their
 HTML files, which basically means they're stealing your bandwidth.
-You can prevent them from doing this by using non-local referer filtering.
-With this option, certain files can only be fetched via a local referer.
+You can prevent them from doing this by using non-local referrer filtering.
+With this option, certain files can only be fetched via a local referrer.
 The files have to be referenced by a local web page.
 If a web page on some other site references the files, that fetch will
 be blocked.
 There are three config-file variables for this feature:
 .TP
 .B urlpat
-A wildcard pattern for the URLs that should require a local referer.
+A wildcard pattern for the URLs that should require a local referrer.
 This is typically just image files, sound files, and so on.
 For example:
 .nf
   urlpat=**.jpg|**.gif|**.au|**.wav
 .fi
-For most sites, that one setting is all you need to enable referer filtering.
+For most sites, that one setting is all you need to enable referrer filtering.
 .TP
-.B noemptyreferers
-By default, requests with no referer at all, or a null referer, or a
-referer with no apparent hostname, are allowed.
+.B noemptyreferrers
+By default, requests with no referrer at all, or a null referrer, or a
+referrer with no apparent hostname, are allowed.
 With this variable set, such requests are disallowed.
 .TP
 .B localpat
 A wildcard pattern that specifies the local host or hosts.
-This is used to determine if the host in the referer is local or not.
+This is used to determine if the host in the referrer is local or not.
 If not specified it defaults to the actual local hostname.
 .SH SYMLINKS
 .PP
@@ -521,7 +521,7 @@ all fairly similar to CERN Common Log Format:
 .nf
   Aug  6 15:40:34 acme thttpd[583]: 165.113.207.103 - - "GET /file" 200 357
   Aug  6 15:40:43 acme thttpd[583]: 165.113.207.103 - - "HEAD /file" 200 0
-  Aug  6 15:41:16 acme thttpd[583]: referer http://www.acme.com/ -> /dir
+  Aug  6 15:41:16 acme thttpd[583]: referrer http://www.acme.com/ -> /dir
   Aug  6 15:41:16 acme thttpd[583]: user-agent Mozilla/1.1N
 .fi
 The package includes a script for translating these log entries info

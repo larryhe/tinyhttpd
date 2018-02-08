@@ -78,7 +78,7 @@ static int do_chroot, no_log, no_symlink_check, do_vhost, do_global_passwd;
 static char* cgi_pattern;
 static int cgi_limit;
 static char* url_pattern;
-static int no_empty_referers;
+static int no_empty_referrers;
 static char* local_pattern;
 static char* logfile;
 static char* throttlefile;
@@ -148,7 +148,7 @@ static void value_required( char* name, char* value );
 static void no_value_required( char* name, char* value );
 static char* e_strdup( char* oldstr );
 static void lookup_hostname( httpd_sockaddr* sa4P, size_t sa4_len, int* gotv4P, httpd_sockaddr* sa6P, size_t sa6_len, int* gotv6P );
-static void read_throttlefile( char* throttlefile );
+static void read_throttlefile( char* tf );
 static void shut_down( void );
 static int handle_newconnect( struct timeval* tvP, int listen_fd );
 static void handle_read( connecttab* c, struct timeval* tvP );
@@ -642,7 +642,7 @@ main( int argc, char** argv )
 	gotv4 ? &sa4 : (httpd_sockaddr*) 0, gotv6 ? &sa6 : (httpd_sockaddr*) 0,
 	port, cgi_pattern, cgi_limit, charset, p3p, max_age, cwd, no_log, logfp,
 	no_symlink_check, do_vhost, do_global_passwd, url_pattern,
-	local_pattern, no_empty_referers );
+	local_pattern, no_empty_referrers );
     if ( hs == (httpd_server*) 0 )
 	exit( 1 );
 
@@ -870,7 +870,7 @@ parse_args( int argc, char** argv )
     cgi_limit = 0;
 #endif /* CGI_LIMIT */
     url_pattern = (char*) 0;
-    no_empty_referers = 0;
+    no_empty_referrers = 0;
     local_pattern = (char*) 0;
     throttlefile = (char*) 0;
     hostname = (char*) 0;
@@ -1069,25 +1069,15 @@ read_config( char* filename )
 		value_required( name, value );
 		data_dir = e_strdup( value );
 		}
-	    else if ( strcasecmp( name, "symlink" ) == 0 )
-		{
-		no_value_required( name, value );
-		no_symlink_check = 0;
-		}
-	    else if ( strcasecmp( name, "nosymlink" ) == 0 )
+	    else if ( strcasecmp( name, "nosymlinkcheck" ) == 0 )
 		{
 		no_value_required( name, value );
 		no_symlink_check = 1;
 		}
-	    else if ( strcasecmp( name, "symlinks" ) == 0 )
+	    else if ( strcasecmp( name, "symlinkcheck" ) == 0 )
 		{
 		no_value_required( name, value );
 		no_symlink_check = 0;
-		}
-	    else if ( strcasecmp( name, "nosymlinks" ) == 0 )
-		{
-		no_value_required( name, value );
-		no_symlink_check = 1;
 		}
 	    else if ( strcasecmp( name, "user" ) == 0 )
 		{
@@ -1109,10 +1099,11 @@ read_config( char* filename )
 		value_required( name, value );
 		url_pattern = e_strdup( value );
 		}
-	    else if ( strcasecmp( name, "noemptyreferers" ) == 0 )
+	    else if ( strcasecmp( name, "noemptyreferers" ) == 0 ||
+	              strcasecmp( name, "noemptyreferrers" ) == 0 )
 		{
 		no_value_required( name, value );
-		no_empty_referers = 1;
+		no_empty_referrers = 1;
 		}
 	    else if ( strcasecmp( name, "localpat" ) == 0 )
 		{
@@ -1367,7 +1358,7 @@ lookup_hostname( httpd_sockaddr* sa4P, size_t sa4_len, int* gotv4P, httpd_sockad
 
 
 static void
-read_throttlefile( char* throttlefile )
+read_throttlefile( char* tf )
     {
     FILE* fp;
     char buf[5000];
@@ -1377,11 +1368,11 @@ read_throttlefile( char* throttlefile )
     long max_limit, min_limit;
     struct timeval tv;
 
-    fp = fopen( throttlefile, "r" );
+    fp = fopen( tf, "r" );
     if ( fp == (FILE*) 0 )
 	{
-	syslog( LOG_CRIT, "%.80s - %m", throttlefile );
-	perror( throttlefile );
+	syslog( LOG_CRIT, "%.80s - %m", tf );
+	perror( tf );
 	exit( 1 );
 	}
 
@@ -1413,10 +1404,10 @@ read_throttlefile( char* throttlefile )
 	else
 	    {
 	    syslog( LOG_CRIT,
-		"unparsable line in %.80s - %.80s", throttlefile, buf );
+		"unparsable line in %.80s - %.80s", tf, buf );
 	    (void) fprintf( stderr,
 		"%s: unparsable line in %.80s - %.80s\n",
-		argv0, throttlefile, buf );
+		argv0, tf, buf );
 	    continue;
 	    }
 
@@ -1493,8 +1484,8 @@ shut_down( void )
 	    fdwatch_del_fd( ths->listen6_fd );
 	httpd_terminate( ths );
 	}
-    mmc_destroy();
-    tmr_destroy();
+    mmc_term();
+    tmr_term();
     free( (void*) connects );
     if ( throttles != (throttletab*) 0 )
 	free( (void*) throttles );
@@ -2163,7 +2154,7 @@ logstats( struct timeval* nowP )
     if ( stats_secs == 0 )
 	stats_secs = 1;	/* fudge */
     stats_time = now;
-    syslog( LOG_INFO,
+    syslog( LOG_NOTICE,
 	"up %ld seconds, stats for %ld seconds:", up_secs, stats_secs );
 
     thttpd_logstats( stats_secs );
@@ -2179,10 +2170,10 @@ static void
 thttpd_logstats( long secs )
     {
     if ( secs > 0 )
-	syslog( LOG_INFO,
+	syslog( LOG_NOTICE,
 	    "  thttpd - %ld connections (%g/sec), %d max simultaneous, %lld bytes (%g/sec), %d httpd_conns allocated",
 	    stats_connections, (float) stats_connections / secs,
-	    stats_simultaneous, (int64_t) stats_bytes,
+	    stats_simultaneous, (long long) stats_bytes,
 	    (float) stats_bytes / secs, httpd_conn_count );
     stats_connections = 0;
     stats_bytes = 0;

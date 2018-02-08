@@ -144,7 +144,7 @@
 ** You can override this in the config file with the "charset" setting,
 ** or on the command like with the -T flag.
 */
-#define DEFAULT_CHARSET "iso-8859-1"
+#define DEFAULT_CHARSET "UTF-8"
 
 
 /* Most people won't want to change anything below here. */
@@ -308,12 +308,6 @@
 ** accessing a bunch of large files.
 */
 #define DESIRED_MAX_MAPPED_BYTES 1000000000
-
-/* CONFIGURE: Minimum and maximum intervals between child-process reaping,
-** in seconds.
-*/
-#define MIN_REAP_TIME 30
-#define MAX_REAP_TIME 900
 
 
 /* You almost certainly don't want to change anything below here. */

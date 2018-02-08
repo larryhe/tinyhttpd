@@ -1,7 +1,7 @@
 /* thttpd.c - tiny/turbo/throttling HTTP server
 **
-** Copyright © 1995,1998,1999,2000,2001 by Jef Poskanzer <jef@mail.acme.com>.
-** All rights reserved.
+** Copyright © 1995,1998,1999,2000,2001,2015 by
+** Jef Poskanzer <jef@mail.acme.com>. All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions
@@ -573,7 +573,7 @@ main( int argc, char** argv )
 	    {
 	    if ( strncmp( logfile, cwd, strlen( cwd ) ) == 0 )
 		{
-		(void) strcpy( logfile, &logfile[strlen( cwd ) - 1] );
+		(void) ol_strcpy( logfile, &logfile[strlen( cwd ) - 1] );
 		/* (We already guaranteed that cwd ends with a slash, so leaving
 		** that slash in logfile makes it an absolute pathname within
 		** the chroot tree.)
@@ -1413,9 +1413,9 @@ read_throttlefile( char* tf )
 
 	/* Nuke any leading slashes in pattern. */
 	if ( pattern[0] == '/' )
-	    (void) strcpy( pattern, &pattern[1] );
+	    (void) ol_strcpy( pattern, &pattern[1] );
 	while ( ( cp = strstr( pattern, "|/" ) ) != (char*) 0 )
-	    (void) strcpy( cp + 1, cp + 2 );
+	    (void) ol_strcpy( cp + 1, cp + 2 );
 
 	/* Check for room in throttles. */
 	if ( numthrottles >= maxthrottles )

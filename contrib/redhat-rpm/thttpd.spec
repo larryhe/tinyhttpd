@@ -1,6 +1,6 @@
 Summary: Throttleable lightweight httpd server
 Name: thttpd
-Version: 2.26
+Version: 2.27
 Release: 1
 Group: Networking
 URL: http://www.acme.com/software/thttpd

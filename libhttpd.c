@@ -1,7 +1,7 @@
 /* libhttpd.c - HTTP protocol library
 **
-** Copyright © 1995,1998,1999,2000,2001 by Jef Poskanzer <jef@mail.acme.com>.
-** All rights reserved.
+** Copyright © 1995,1998,1999,2000,2001,2015 by
+** Jef Poskanzer <jef@mail.acme.com>. All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions
@@ -292,7 +292,7 @@ httpd_initialize(
 	    }
 	/* Nuke any leading slashes in the cgi pattern. */
 	while ( ( cp = strstr( hs->cgi_pattern, "|/" ) ) != (char*) 0 )
-	    (void) strcpy( cp + 1, cp + 2 );
+	    (void) ol_strcpy( cp + 1, cp + 2 );
 	}
     hs->cgi_limit = cgi_limit;
     hs->cgi_count = 0;
@@ -1508,7 +1508,7 @@ expand_symlinks( char* path, char** restP, int no_symlink_check, int tildemapped
 	/* Remove any leading slashes. */
 	while ( rest[0] == '/' )
 	    {
-	    (void) strcpy( rest, &(rest[1]) );
+	    (void) ol_strcpy( rest, &(rest[1]) );
 	    --restlen;
 	    }
     r = rest;
@@ -1626,7 +1626,7 @@ expand_symlinks( char* path, char** restP, int no_symlink_check, int tildemapped
 	/* Insert the link contents in front of the rest of the filename. */
 	if ( restlen != 0 )
 	    {
-	    (void) strcpy( rest, r );
+	    (void) ol_strcpy( rest, r );
 	    httpd_realloc_str( &rest, &maxrest, restlen + linklen + 1 );
 	    for ( i = restlen; i >= 0; --i )
 		rest[i + linklen + 1] = rest[i];
@@ -2355,7 +2355,7 @@ httpd_parse_request( httpd_conn* hc )
 		 hc->expnfilename, hc->hs->cwd, strlen( hc->hs->cwd ) ) == 0 )
 	    {
 	    /* Elide the current directory. */
-	    (void) strcpy(
+	    (void) ol_strcpy(
 		hc->expnfilename, &hc->expnfilename[strlen( hc->hs->cwd )] );
 	    }
 #ifdef TILDE_MAP_2
@@ -2422,26 +2422,26 @@ de_dotdot( char* file )
 	{
 	for ( cp2 = cp + 2; *cp2 == '/'; ++cp2 )
 	    continue;
-	(void) strcpy( cp + 1, cp2 );
+	(void) ol_strcpy( cp + 1, cp2 );
 	}
 
     /* Remove leading ./ and any /./ sequences. */
     while ( strncmp( file, "./", 2 ) == 0 )
-	(void) strcpy( file, file + 2 );
+	(void) ol_strcpy( file, file + 2 );
     while ( ( cp = strstr( file, "/./") ) != (char*) 0 )
-	(void) strcpy( cp, cp + 2 );
+	(void) ol_strcpy( cp, cp + 2 );
 
     /* Alternate between removing leading ../ and removing xxx/../ */
     for (;;)
 	{
 	while ( strncmp( file, "../", 3 ) == 0 )
-	    (void) strcpy( file, file + 3 );
+	    (void) ol_strcpy( file, file + 3 );
 	cp = strstr( file, "/../" );
 	if ( cp == (char*) 0 )
 	    break;
 	for ( cp2 = cp - 1; cp2 >= file && *cp2 != '/'; --cp2 )
 	    continue;
-	(void) strcpy( cp2 + 1, cp + 4 );
+	(void) ol_strcpy( cp2 + 1, cp + 4 );
 	}
 
     /* Also elide any xxx/.. at the end. */
@@ -4122,7 +4122,7 @@ httpd_ntoa( httpd_sockaddr* saP )
 	}
     else if ( IN6_IS_ADDR_V4MAPPED( &saP->sa_in6.sin6_addr ) && strncmp( str, "::ffff:", 7 ) == 0 )
 	/* Elide IPv6ish prefix for IPv4 addresses. */
-	(void) strcpy( str, &str[7] );
+	(void) ol_strcpy( str, &str[7] );
 
     return str;
 

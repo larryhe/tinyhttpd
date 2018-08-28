@@ -1210,6 +1210,9 @@ httpd_method_str( int method )
 	case METHOD_GET: return "GET";
 	case METHOD_HEAD: return "HEAD";
 	case METHOD_POST: return "POST";
+	case METHOD_PUT: return "PUT";
+	case METHOD_DELETE: return "DELETE";
+	case METHOD_TRACE: return "TRACE";
 	default: return "UNKNOWN";
 	}
     }
@@ -2028,6 +2031,12 @@ httpd_parse_request( httpd_conn* hc )
 	hc->method = METHOD_HEAD;
     else if ( strcasecmp( method_str, httpd_method_str( METHOD_POST ) ) == 0 )
 	hc->method = METHOD_POST;
+    else if ( strcasecmp( method_str, httpd_method_str( METHOD_PUT ) ) == 0 )
+	hc->method = METHOD_PUT;
+    else if ( strcasecmp( method_str, httpd_method_str( METHOD_DELETE ) ) == 0 )
+	hc->method = METHOD_DELETE;
+    else if ( strcasecmp( method_str, httpd_method_str( METHOD_TRACE ) ) == 0 )
+	hc->method = METHOD_TRACE;
     else
 	{
 	httpd_send_err( hc, 501, err501title, "", err501form, method_str );
@@ -3567,54 +3576,45 @@ cgi( httpd_conn* hc )
     int r;
     ClientData client_data;
 
-    if ( hc->method == METHOD_GET || hc->method == METHOD_POST )
-	{
-	if ( hc->hs->cgi_limit != 0 && hc->hs->cgi_count >= hc->hs->cgi_limit )
-	    {
-	    httpd_send_err(
-		hc, 503, httpd_err503title, "", httpd_err503form,
-		hc->encodedurl );
-	    return -1;
-	    }
-	++hc->hs->cgi_count;
-	httpd_clear_ndelay( hc->conn_fd );
-	r = fork( );
-	if ( r < 0 )
-	    {
-	    syslog( LOG_ERR, "fork - %m" );
-	    httpd_send_err(
-		hc, 500, err500title, "", err500form, hc->encodedurl );
-	    return -1;
-	    }
-	if ( r == 0 )
-	    {
-	    /* Child process. */
-	    sub_process = 1;
-	    httpd_unlisten( hc->hs );
-	    cgi_child( hc );
-	    }
-
-	/* Parent process. */
-	syslog( LOG_DEBUG, "spawned CGI process %d for file '%.200s'", r, hc->expnfilename );
-#ifdef CGI_TIMELIMIT
-	/* Schedule a kill for the child process, in case it runs too long */
-	client_data.i = r;
-	if ( tmr_create( (struct timeval*) 0, cgi_kill, client_data, CGI_TIMELIMIT * 1000L, 0 ) == (Timer*) 0 )
-	    {
-	    syslog( LOG_CRIT, "tmr_create(cgi_kill child) failed" );
-	    exit( 1 );
-	    }
-#endif /* CGI_TIMELIMIT */
-	hc->status = 200;
-	hc->bytes_sent = CGI_BYTECOUNT;
-	hc->should_linger = 0;
-	}
-    else
+    if ( hc->hs->cgi_limit != 0 && hc->hs->cgi_count >= hc->hs->cgi_limit )
 	{
 	httpd_send_err(
-	    hc, 501, err501title, "", err501form, httpd_method_str( hc->method ) );
+	    hc, 503, httpd_err503title, "", httpd_err503form,
+	    hc->encodedurl );
 	return -1;
 	}
+    ++hc->hs->cgi_count;
+    httpd_clear_ndelay( hc->conn_fd );
+    r = fork( );
+    if ( r < 0 )
+	{
+	syslog( LOG_ERR, "fork - %m" );
+	httpd_send_err(
+	    hc, 500, err500title, "", err500form, hc->encodedurl );
+	return -1;
+	}
+    if ( r == 0 )
+	{
+	/* Child process. */
+	sub_process = 1;
+	httpd_unlisten( hc->hs );
+	cgi_child( hc );
+	}
+
+    /* Parent process. */
+    syslog( LOG_DEBUG, "spawned CGI process %d for file '%.200s'", r, hc->expnfilename );
+#ifdef CGI_TIMELIMIT
+    /* Schedule a kill for the child process, in case it runs too long */
+    client_data.i = r;
+    if ( tmr_create( (struct timeval*) 0, cgi_kill, client_data, CGI_TIMELIMIT * 1000L, 0 ) == (Timer*) 0 )
+	{
+	syslog( LOG_CRIT, "tmr_create(cgi_kill child) failed" );
+	exit( 1 );
+	}
+#endif /* CGI_TIMELIMIT */
+    hc->status = 200;
+    hc->bytes_sent = CGI_BYTECOUNT;
+    hc->should_linger = 0;
 
     return 0;
     }
@@ -3636,14 +3636,6 @@ really_start_request( httpd_conn* hc, struct timeval* nowP )
     char* pi;
 
     expnlen = strlen( hc->expnfilename );
-
-    if ( hc->method != METHOD_GET && hc->method != METHOD_HEAD &&
-	 hc->method != METHOD_POST )
-	{
-	httpd_send_err(
-	    hc, 501, err501title, "", err501form, httpd_method_str( hc->method ) );
-	return -1;
-	}
 
     /* Stat the file. */
     if ( stat( hc->expnfilename, &hc->sb ) < 0 )
@@ -3852,6 +3844,13 @@ really_start_request( httpd_conn* hc, struct timeval* nowP )
 	    hc, 403, err403title, "",
 	    ERROR_FORM( err403form, "The requested URL '%.80s' resolves to a file plus CGI-style pathinfo, but the file is not a valid CGI file.\n" ),
 	    hc->encodedurl );
+	return -1;
+	}
+
+    if ( hc->method != METHOD_GET && hc->method != METHOD_HEAD )
+	{
+	httpd_send_err(
+	    hc, 501, err501title, "", err501form, httpd_method_str( hc->method ) );
 	return -1;
 	}
 

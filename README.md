@@ -4,7 +4,7 @@ tinyhttpd
 This is a github mirror of thttpd (http://www.acme.com/software/thttpd/)
 
 thttpd - tiny/turbo/throttling HTTP server
-                    version 2.28 of 04Feb2018
+                    version 2.29 of 23May2018
 
 thttpd is a simple, small, portable, fast, and secure HTTP server.
 

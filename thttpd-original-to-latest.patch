@@ -1,0 +1,1301 @@
+--- a/libhttpd.c
++++ b/libhttpd.c
+@@ -40,6 +40,7 @@
+ 
+ #include <ctype.h>
+ #include <errno.h>
++#include <stdint.h>
+ #include <fcntl.h>
+ #include <time.h>
+ #ifdef HAVE_MEMORY_H
+@@ -274,7 +275,7 @@
+         }
+         /* Nuke any leading slashes in the cgi pattern. */
+         while ((cp = strstr(hs->cgi_pattern, "|/")) != (char*) 0)
+-            (void) strcpy(cp + 1, cp + 2);
++            (void) memmove(cp + 1, cp + 2, strlen(cp + 2) + 1);
+     }
+     hs->cgi_limit = cgi_limit;
+     hs->cgi_count = 0;
+@@ -910,6 +911,10 @@
+     static char* prevauthpath;
+     static size_t maxprevauthpath = 0;
+     static time_t prevmtime;
++    static time_t prevctime;
++    static off_t prevsize;
++    static ino_t previno;
++    static dev_t prevdev;
+     static char* prevuser;
+     static size_t maxprevuser = 0;
+     static char* prevcryp;
+@@ -936,6 +941,15 @@
+     /* Decode it. */
+     l = b64_decode(&(hc->authorization[6]), (unsigned char*) authinfo,
+             sizeof(authinfo) - 1);
++    if (l <= 0 || l >= (int) sizeof(authinfo)) {
++        send_authenticate(hc, dirname);
++        return -1;
++    }
++    /* Reject decoded NULs rather than accepting truncated credentials. */
++    if (memchr(authinfo, '\0', (size_t) l) != NULL) {
++        send_authenticate(hc, dirname);
++        return -1;
++    }
+     authinfo[l] = '\0';
+     /* Split into user and password. */
+     authpass = strchr(authinfo, ':');
+@@ -952,11 +966,12 @@
+ 
+     /* See if we have a cached entry and can use it. */
+     if (maxprevauthpath != 0 && strcmp(authpath, prevauthpath) == 0
+-            && sb.st_mtime == prevmtime && strcmp(authinfo, prevuser) == 0) {
++            && sb.st_mtime == prevmtime && sb.st_ctime == prevctime
++            && sb.st_size == prevsize && sb.st_ino == previno
++            && sb.st_dev == prevdev && strcmp(authinfo, prevuser) == 0) {
+         /* Yes.  Check against the cached encrypted password. */
+-        if (strcmp(
+-                (const char*) crypt((const char*) authpass,
+-                        (const char*) prevcryp), (const char*) prevcryp) == 0) {
++        const char* computed = crypt(authpass, prevcryp);
++        if (computed != NULL && strcmp(computed, prevcryp) == 0) {
+             /* Ok! */
+             httpd_realloc_str(&hc->remoteuser, &hc->maxremoteuser,
+                     strlen(authinfo));
+@@ -987,7 +1002,7 @@
+     while (fgets(line, sizeof(line), fp) != (char*) 0) {
+         /* Nuke newline. */
+         l = strlen(line);
+-        if (line[l - 1] == '\n')
++        if (l > 0 && line[l - 1] == '\n')
+             line[l - 1] = '\0';
+         /* Split into user and encrypted password. */
+         cryp = strchr(line, ':');
+@@ -999,7 +1014,8 @@
+             /* Yes. */
+             (void) fclose(fp);
+             /* So is the password right? */
+-            if ((const char*)strcmp((const char*)crypt((const char*)authpass,(const char*)cryp),(const char*)cryp) == 0) {
++            const char* computed = crypt(authpass, cryp);
++            if (computed != NULL && strcmp(computed, cryp) == 0) {
+                 /* Ok! */
+                 httpd_realloc_str(&hc->remoteuser, &hc->maxremoteuser,
+                         strlen(line));
+@@ -1009,6 +1025,10 @@
+                         strlen(authpath));
+                 (void) strcpy(prevauthpath, authpath);
+                 prevmtime = sb.st_mtime;
++                prevctime = sb.st_ctime;
++                prevsize = sb.st_size;
++                previno = sb.st_ino;
++                prevdev = sb.st_dev;
+                 httpd_realloc_str(&prevuser, &maxprevuser, strlen(authinfo));
+                 (void) strcpy(prevuser, authinfo);
+                 httpd_realloc_str(&prevcryp, &maxprevcryp, strlen(cryp));
+@@ -1082,7 +1102,9 @@
+  */
+ static void strdecode(char* to, char* from) {
+     for (; *from != '\0'; ++to, ++from) {
+-        if (from[0] == '%' && isxdigit(from[1]) && isxdigit(from[2])) {
++        if (from[0] == '%' && from[1] != '\0' && from[2] != '\0'
++                && isxdigit((unsigned char) from[1])
++                && isxdigit((unsigned char) from[2])) {
+             *to = hexit(from[1]) * 16 + hexit(from[2]);
+             from += 2;
+         } else
+@@ -1190,6 +1212,29 @@
+     return 1;
+ }
+ #endif /* TILDE_MAP_2 */
++
++/* Keep untrusted authority values out of filesystem path components. */
++static int valid_vhost_name(const char* name) {
++    const unsigned char* p = (const unsigned char*) name;
++    size_t len = strlen(name);
++#ifdef USE_IPV6
++    if (len >= 4 && name[0] == '[' && name[len - 1] == ']') {
++        struct in6_addr address;
++        char literal[INET6_ADDRSTRLEN];
++        if (len - 2 >= sizeof(literal))
++            return 0;
++        memcpy(literal, name + 1, len - 2);
++        literal[len - 2] = '\0';
++        return inet_pton(AF_INET6, literal, &address) == 1;
++    }
++#endif
++    if (len == 0 || len > 253 || name[0] == '.' || name[len - 1] == '.')
++        return 0;
++    for (; *p != '\0'; ++p)
++        if (!(isalnum(*p) || *p == '.' || *p == '-'))
++            return 0;
++    return strstr(name, "..") == (char*) 0;
++}
+ 
+ /* Virtual host mapping. */
+ static int vhost_map(httpd_conn* hc) {
+@@ -1332,7 +1377,7 @@
+     if (!tildemapped)
+         /* Remove any leading slashes. */
+         while (rest[0] == '/') {
+-            (void) strcpy(rest, &(rest[1]));
++            (void) memmove(rest, rest + 1, strlen(rest + 1) + 1);
+             --restlen;
+         }
+     r = rest;
+@@ -1745,6 +1790,18 @@
+     char* eol;
+     char* cp;
+     char* pi;
++    int saw_content_length = 0;
++    int saw_transfer_encoding = 0;
++    int saw_host = 0;
++    size_t raw_i;
++
++    /* A NUL in the wire request must not terminate parsing early. */
++    for (raw_i = 0; raw_i < hc->read_idx; ++raw_i) {
++        if (hc->read_buf[raw_i] == '\0') {
++            httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++            return -1;
++        }
++    }
+ 
+     hc->checked_idx = 0; /* reset */
+     method_str = bufgets(hc);
+@@ -1787,7 +1844,7 @@
+             return -1;
+         }
+         *url = '\0';
+-        if (strchr(reqhost, '/') != (char*) 0 || reqhost[0] == '.') {
++        if (!valid_vhost_name(reqhost)) {
+             httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form,
+                     "");
+             return -1;
+@@ -1816,6 +1873,14 @@
+     hc->encodedurl = url;
+     httpd_realloc_str(&hc->decodedurl, &hc->maxdecodedurl,
+             strlen(hc->encodedurl));
++    /* Reject percent-encoded NULs in any URL component. */
++    for (cp = hc->encodedurl; *cp != '\0'; ++cp) {
++        if (cp[0] == '%' && cp[1] != '\0' && cp[2] != '\0'
++                && cp[1] == '0' && cp[2] == '0') {
++            httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++            return -1;
++        }
++    }
+     strdecode(hc->decodedurl, hc->encodedurl);
+ 
+     httpd_realloc_str(&hc->origfilename, &hc->maxorigfilename,
+@@ -1851,6 +1916,31 @@
+         while ((buf = bufgets(hc)) != (char*) 0) {
+             if (buf[0] == '\0')
+                 break;
++            /* Reject folded headers and malformed field names. */
++            if (buf[0] == ' ' || buf[0] == '\t' ||
++                    (cp = strchr(buf, ':')) == (char*) 0) {
++                httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++                return -1;
++            }
++            {
++                char* field;
++                for (field = buf; field < cp; ++field) {
++                    if (!isalnum((unsigned char) *field) &&
++                            strchr("!#$%&'*+-.^_`|~", *field) == (char*) 0) {
++                        httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++                        return -1;
++                    }
++                }
++                if (field == buf) {
++                    httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++                    return -1;
++                }
++            }
++            if (strncasecmp(buf, "Transfer-Encoding:", 18) == 0) {
++                saw_transfer_encoding = 1;
++                httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++                return -1;
++            }
+             if (strncasecmp(buf, "Referer:", 8) == 0) {
+                 cp = &buf[8];
+                 cp += strspn(cp, " \t");
+@@ -1864,14 +1954,39 @@
+                 cp += strspn(cp, " \t");
+                 hc->useragent = cp;
+             } else if (strncasecmp(buf, "Host:", 5) == 0) {
++                char* portsep;
++                if (saw_host++) {
++                    httpd_send_err(hc, 400, httpd_err400title, "",
++                            httpd_err400form, "");
++                    return -1;
++                }
+                 cp = &buf[5];
+                 cp += strspn(cp, " \t");
+                 hc->hdrhost = cp;
+-                cp = strchr(hc->hdrhost, ':');
+-                if (cp != (char*) 0)
+-                    *cp = '\0';
+-                if (strchr(hc->hdrhost, '/') != (char*) 0
+-                        || hc->hdrhost[0] == '.') {
++                if (*cp == '[') {
++                    char* closing = strchr(cp, ']');
++                    if (closing == (char*) 0 ||
++                            (closing[1] != '\0' && closing[1] != ':')) {
++                        httpd_send_err(hc, 400, httpd_err400title, "",
++                                httpd_err400form, "");
++                        return -1;
++                    }
++                    portsep = closing[1] == ':' ? closing + 1 : (char*) 0;
++                } else
++                    portsep = strchr(cp, ':');
++                if (portsep != (char*) 0) {
++                    char* digit;
++                    for (digit = portsep + 1; *digit != '\0'; ++digit)
++                        if (!isdigit((unsigned char) *digit))
++                            break;
++                    if (digit == portsep + 1 || *digit != '\0') {
++                        httpd_send_err(hc, 400, httpd_err400title, "",
++                                httpd_err400form, "");
++                        return -1;
++                    }
++                    *portsep = '\0';
++                }
++                if (!valid_vhost_name(hc->hdrhost)) {
+                     httpd_send_err(hc, 400, httpd_err400title, "",
+                             httpd_err400form, "");
+                     return -1;
+@@ -1953,8 +2068,27 @@
+                 cp += strspn(cp, " \t");
+                 hc->contenttype = cp;
+             } else if (strncasecmp(buf, "Content-Length:", 15) == 0) {
++                unsigned long long length;
++                char* end;
++                if (saw_content_length || saw_transfer_encoding) {
++                    httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++                    return -1;
++                }
++                saw_content_length = 1;
+                 cp = &buf[15];
+-                hc->contentlength = atol(cp);
++                cp += strspn(cp, " \t");
++                if (!isdigit((unsigned char) *cp)) {
++                    httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++                    return -1;
++                }
++                errno = 0;
++                length = strtoull(cp, &end, 10);
++                end += strspn(end, " \t");
++                if (errno == ERANGE || *end != '\0' || length >= SIZE_MAX) {
++                    httpd_send_err(hc, 400, httpd_err400title, "", httpd_err400form, "");
++                    return -1;
++                }
++                hc->contentlength = (size_t) length;
+             } else if (strncasecmp(buf, "Authorization:", 14) == 0) {
+                 cp = &buf[14];
+                 cp += strspn(cp, " \t");
+@@ -2144,20 +2278,20 @@
+ 
+     /* Remove leading ./ and any /./ sequences. */
+     while (strncmp(file, "./", 2) == 0)
+-        (void) strcpy(file, file + 2);
++        (void) memmove(file, file + 2, strlen(file + 2) + 1);
+     while ((cp = strstr(file, "/./")) != (char*) 0)
+-        (void) strcpy(cp, cp + 2);
++        (void) memmove(cp, cp + 2, strlen(cp + 2) + 1);
+ 
+     /* Alternate between removing leading ../ and removing xxx/../ */
+     for (;;) {
+         while (strncmp(file, "../", 3) == 0)
+-            (void) strcpy(file, file + 3);
++            (void) memmove(file, file + 3, strlen(file + 3) + 1);
+         cp = strstr(file, "/../");
+         if (cp == (char*) 0)
+             break;
+         for (cp2 = cp - 1; cp2 >= file && *cp2 != '/'; --cp2)
+             continue;
+-        (void) strcpy(cp2 + 1, cp + 4);
++        (void) memmove(cp2 + 1, cp + 4, strlen(cp + 4) + 1);
+     }
+ 
+     /* Also elide any xxx/.. at the end. */
+@@ -2475,6 +2609,10 @@
+             nnames = 0;
+             while ((de = readdir(dirp)) != 0) /* dirent or direct */
+             {
++                /* Do not advertise hidden files in generated listings. */
++                if (de->d_name[0] == '.' &&
++                    strcmp(de->d_name, "..") != 0)
++                    continue;
+                 if (nnames >= maxnames) {
+                     if (maxnames == 0) {
+                         maxnames = 100;
+@@ -2502,7 +2640,8 @@
+             closedir(dirp);
+ 
+             /* Sort the names. */
+-            qsort(nameptrs, nnames, sizeof(*nameptrs), name_compare);
++            if (nnames > 1)
++                qsort(nameptrs, nnames, sizeof(*nameptrs), name_compare);
+ 
+             /* Generate output. */
+             for (i = 0; i < nnames; ++i) {
+@@ -3031,7 +3170,9 @@
+      ** dup()'d descriptor, so we have to clear it.  This could be
+      ** ifdeffed for Linux only.
+      */
++#ifdef __linux__
+     (void) fcntl(hc->conn_fd, F_SETFD, 0);
++#endif
+ 
+     /* Close the syslog descriptor so that the CGI program can't
+      ** mess with it.  All other open descriptors should be either
+@@ -3186,7 +3327,7 @@
+ 
+     /* Default behavior for SIGPIPE. */
+ #ifdef HAVE_SIGSET
+-    (void) sigset( SIGPIPE, SIG_DFL );
++    (void) signal( SIGPIPE, SIG_DFL );
+ #else /* HAVE_SIGSET */
+     (void) signal(SIGPIPE, SIG_DFL);
+ #endif /* HAVE_SIGSET */
+@@ -3686,9 +3827,11 @@
+         str[0] = '?';
+         str[1] = '\0';
+     }
+-    else if ( IN6_IS_ADDR_V4MAPPED( &saP->sa_in6.sin6_addr ) && strncmp( str, "::ffff:", 7 ) == 0 )
++    else if (saP->sa.sa_family == AF_INET6 &&
++            IN6_IS_ADDR_V4MAPPED(&saP->sa_in6.sin6_addr) &&
++            strncmp(str, "::ffff:", 7) == 0)
+     /* Elide IPv6ish prefix for IPv4 addresses. */
+-    (void) strcpy( str, &str[7] );
++    (void) memmove( str, str + 7, strlen(str + 7) + 1 );
+ 
+     return str;
+ 
+@@ -3736,7 +3879,8 @@
+ #ifdef HAVE_VSNPRINTF
+     r = vsnprintf( str, size, format, ap );
+ #else /* HAVE_VSNPRINTF */
+-    r = vsprintf(str, format, ap);
++    /* Never fall back to an unbounded write. */
++    r = vsnprintf(str, size, format, ap);
+ #endif /* HAVE_VSNPRINTF */
+     va_end(ap);
+     return r;
+--- a/thttpd.c
++++ b/thttpd.c
+@@ -34,6 +34,7 @@
+ #include <sys/stat.h>
+ #include <sys/wait.h>
+ #include <sys/uio.h>
++#include <netinet/tcp.h>
+ 
+ #include <errno.h>
+ #ifdef HAVE_FCNTL_H
+@@ -513,7 +514,7 @@
+          */
+         if (logfile != (char*) 0 && strcmp(logfile, "-") != 0) {
+             if (strncmp(logfile, cwd, strlen(cwd)) == 0) {
+-                (void) strcpy(logfile, &logfile[strlen(cwd) - 1]);
++                (void) memmove(logfile, &logfile[strlen(cwd) - 1], strlen(&logfile[strlen(cwd) - 1]) + 1);
+                 /* (We already guaranteed that cwd ends with a slash, so leaving
+                  ** that slash in logfile makes it an absolute pathname within
+                  ** the chroot tree.)
+@@ -548,14 +549,14 @@
+ 
+     /* Set up to catch signals. */
+ #ifdef HAVE_SIGSET
+-    (void) sigset( SIGTERM, handle_term );
+-    (void) sigset( SIGINT, handle_term );
+-    (void) sigset( SIGCHLD, handle_chld );
+-    (void) sigset( SIGPIPE, SIG_IGN ); /* get EPIPE instead */
+-    (void) sigset( SIGHUP, handle_hup );
+-    (void) sigset( SIGUSR1, handle_usr1 );
+-    (void) sigset( SIGUSR2, handle_usr2 );
+-    (void) sigset( SIGALRM, handle_alrm );
++    (void) signal( SIGTERM, handle_term );
++    (void) signal( SIGINT, handle_term );
++    (void) signal( SIGCHLD, handle_chld );
++    (void) signal( SIGPIPE, SIG_IGN ); /* get EPIPE instead */
++    (void) signal( SIGHUP, handle_hup );
++    (void) signal( SIGUSR1, handle_usr1 );
++    (void) signal( SIGUSR2, handle_usr2 );
++    (void) signal( SIGALRM, handle_alrm );
+ #else /* HAVE_SIGSET */
+     (void) signal(SIGTERM, handle_term);
+     (void) signal(SIGINT, handle_term);
+@@ -1225,9 +1226,9 @@
+ 
+         /* Nuke any leading slashes in pattern. */
+         if (pattern[0] == '/')
+-            (void) strcpy(pattern, &pattern[1]);
++            (void) memmove(pattern, pattern + 1, strlen(pattern + 1) + 1);
+         while ((cp = strstr(pattern, "|/")) != (char*) 0)
+-            (void) strcpy(cp + 1, cp + 2);
++            (void) memmove(cp + 1, cp + 2, strlen(cp + 2) + 1);
+ 
+         /* Check for room in throttles. */
+         if (numthrottles >= maxthrottles) {
+@@ -1432,6 +1433,15 @@
+         /* Something went wrong.  Close down the connection. */
+         finish_connection(c, tvP);
+         return;
++    }
++
++    /* Disable Nagle after request dispatch, so CGI children do not
++     ** inherit the setting before their sockets are established.
++     */
++    {
++        int on = 1;
++        (void) setsockopt(hc->conn_fd, IPPROTO_TCP, TCP_NODELAY,
++                          (char*) &on, sizeof(on));
+     }
+ 
+     /* Fill in end_byte_index. */
+--- a/mmc.c
++++ b/mmc.c
+@@ -138,10 +138,24 @@
+     }
+ 
+     /* Open the file. */
+-    fd = open(filename, O_RDONLY);
++    fd = open(filename, O_RDONLY | O_NONBLOCK);
+     if (fd < 0) {
+         syslog(LOG_ERR, "open - %m");
+         return (void*) 0;
++    }
++
++    /* A file may have changed between stat() and open().  In particular,
++     ** never map a FIFO or device supplied in place of a regular file.
++     */
++    {
++        struct stat opened_sb;
++        if (fstat(fd, &opened_sb) != 0 || !S_ISREG(opened_sb.st_mode) ||
++            opened_sb.st_dev != sb.st_dev || opened_sb.st_ino != sb.st_ino ||
++            opened_sb.st_size != sb.st_size) {
++            (void) close(fd);
++            syslog(LOG_ERR, "file changed or is not regular during map");
++            return (void*) 0;
++        }
+     }
+ 
+     /* Find a free Map entry or make a new one. */
+--- a/cgi-src/redirect.c
++++ b/cgi-src/redirect.c
+@@ -107,6 +107,7 @@
+     (void) printf(
+             "\
+ Location: %s\n\
++Refresh: 0; url=%s\n\
+ Content-type: text/html\n\
+ \n\
+ <HTML><HEAD><TITLE>%s</TITLE></HEAD>\n\
+@@ -114,7 +115,7 @@
+ The requested filename, %s, has moved to a new URL:\n\
+ <A HREF=\"%s\">%s</A>.\n\
+ </BODY></HTML>\n",
+-            url, title, title, script_name, url, url);
++            url, url, title, title, script_name, url, url);
+ }
+ 
+ int main(int argc, char** argv) {
+@@ -169,14 +170,30 @@
+         /* Check for blank line. */
+         if (*cp != '\0') {
+             /* Parse line. */
+-            if (sscanf(cp, "%[^ \t\n] %[^ \t\n]", file, url) == 2) {
++            if (sscanf(cp, "%4999[^ \t\n] %4999[^ \t\n]", file, url) == 2) {
++                /* Never emit CR/LF in a CGI Location header. */
++                if (strpbrk(url, "\r\n") != NULL)
++                    continue;
++                /* Directory targets use their index page.  Reject an entry
++                 ** rather than truncate it if the result is too long.
++                 */
++                if (url[0] != '\0' && url[strlen(url) - 1] == '/') {
++                    static const char index_name[] = "index.html";
++                    if (strlen(url) + sizeof(index_name) > sizeof(url))
++                        continue;
++                    strcat(url, index_name);
++                }
+                 /* Check for wildcard match. */
+                 star = strchr(file, '*');
+                 if (star != (char*) 0) {
+                     /* Check for leading match. */
+                     if (strncmp(file, script_name, star - file) == 0) {
+                         /* Got it; put together the full name. */
+-                        strcat(url, script_name + (star - file));
++                        const char* suffix = script_name + (star - file);
++                        if (strlen(suffix) >= sizeof(url) - strlen(url)
++                                || strpbrk(suffix, "\r\n") != NULL)
++                            continue;
++                        strcat(url, suffix);
+                         /* XXX Whack the script_name, too? */
+                         moved(script_name, url);
+                         exit(0);
+--- a/cgi-src/ssi.c
++++ b/cgi-src/ssi.c
+@@ -235,8 +235,10 @@
+     else
+         *cp = '\0';
+     authname = malloc(strlen(dirname) + 1 + sizeof(AUTH_FILE));
+-    if (authname == (char*) 0)
++    if (authname == (char*) 0) {
++        free(dirname);
+         return 0; /* out of memory */
++    }
+     (void) sprintf(authname, "%s/%s", dirname, AUTH_FILE);
+     r = stat(authname, &sb2);
+     free(dirname);
+--- a/config.h
++++ b/config.h
+@@ -328,8 +328,8 @@
+ */
+ #define DEFAULT_PORT 80
+ 
+-/* CONFIGURE: A list of index filenames to check.  The files are searched
+-** for in this order.
++/* CONFIGURE: A list of simple index filenames (not paths).  The files
++** are searched for in this order.  Do not include slashes or dot-dot.
+ */
+ #define INDEX_NAMES "index.html", "index.htm", "index.xhtml", "index.xht", "Default.htm", "index.cgi"
+ 
+--- a/README
++++ b/README
+@@ -104,6 +104,10 @@
+ BASIC AUTHENTICATION
+ 
+ Basic Authentication is available as an option at compile time. If enabled, it uses a password file in the directory to be protected, called .htpasswd by default. This file is formatted as the familiar colon-separated username/encrypted-password pair, records delimited by newlines. The protection does not carry over to subdirectories. The utility program htpasswd(1) is included to help create and modify .htpasswd files. 
++    When a requested path contains a symbolic link, authorization is checked
++    against the resolved target path, not the location of the link.  Put the
++    .htpasswd file in the target directory (or use global password protection)
++    rather than relying on a password file beside the symlink.
+ 
+ Relevant config.h option: AUTH_FILE, 
+ 
+--- a/INSTALL
++++ b/INSTALL
+@@ -1,370 +1,365 @@
+ Installation Instructions
+ *************************
+ 
+-Copyright (C) 1994-1996, 1999-2002, 2004-2013 Free Software Foundation,
+-Inc.
++Basic Installation
++==================
++
++   The following shell commands:
++
++     test -f configure || ./bootstrap
++     ./configure
++     make
++     make install
++
++should configure, build, and install this package.  The first line,
++which bootstraps, is intended for developers; when building from
++distribution tarballs it does nothing and can be skipped.
++
++   The following more-detailed instructions are generic; see the
++‘README’ file for instructions specific to this package.  Some packages
++provide this ‘INSTALL’ file but do not implement all of the features
++documented below.  The lack of an optional feature in a given package is
++not necessarily a bug.  More recommendations for GNU packages can be
++found in the GNU Coding Standards.
++
++   Many packages have scripts meant for developers instead of ordinary
++builders, as they may use developer tools that are less commonly
++installed, or they may access the network, which has privacy
++implications.  If the ‘bootstrap’ shell script exists, it attempts to
++build the ‘configure’ shell script and related files, possibly using
++developer tools or the network.  Because the output of ‘bootstrap’ is
++system-independent, it is normally run by a package developer so that
++its output can be put into the distribution tarball and ordinary
++builders and users need not run ‘bootstrap’.  Some packages have
++commands like ‘./autopull.sh’ and ‘./autogen.sh’ that you can run
++instead of ‘./bootstrap’, for more fine-grained control over
++bootstrapping.
++
++   The ‘configure’ shell script attempts to guess correct values for
++various system-dependent variables used during compilation.  It uses
++those values to create a ‘Makefile’ in each directory of the package.
++It may also create one or more ‘.h’ files containing system-dependent
++definitions.  Finally, it creates a shell script ‘config.status’ that
++you can run in the future to recreate the current configuration, and a
++file ‘config.log’ containing output useful for debugging ‘configure’.
++
++   It can also use an optional file (typically called ‘config.cache’ and
++enabled with ‘--cache-file=config.cache’ or simply ‘-C’) that saves the
++results of its tests to speed up reconfiguring.  Caching is disabled by
++default to prevent problems with accidental use of stale cache files.
++
++   If you need to do unusual things to compile the package, please try
++to figure out how ‘configure’ could check whether to do them, and mail
++diffs or instructions to the address given in the ‘README’ so they can
++be considered for the next release.  If you are using the cache, and at
++some point ‘config.cache’ contains results you don’t want to keep, you
++may remove or edit it.
++
++   The ‘autoconf’ program generates ‘configure’ from the file
++‘configure.ac’.  Normally you should edit ‘configure.ac’ instead of
++editing ‘configure’ directly.
++
++   The simplest way to compile this package is:
++
++  1. ‘cd’ to the directory containing the package’s source code.
++
++  2. If this is a developer checkout and file ‘configure’ does not yet
++     exist, type ‘./bootstrap’ to create it.  You may need special
++     developer tools and network access to bootstrap, and the network
++     access may have privacy implications.
++
++  3. Type ‘./configure’ to configure the package for your system.  This
++     might take a while.  While running, ‘configure’ prints messages
++     telling which features it is checking for.
++
++  4. Type ‘make’ to compile the package.
++
++  5. Optionally, type ‘make check’ to run any self-tests that come with
++     the package, generally using the just-built uninstalled binaries.
++
++  6. Type ‘make install’ to install the programs and any data files and
++     documentation.  When installing into a prefix owned by root, it is
++     recommended that the package be configured and built as a regular
++     user, and only the ‘make install’ phase executed with root
++     privileges.
++
++  7. Optionally, type ‘make installcheck’ to repeat any self-tests, but
++     this time using the binaries in their final installed location.
++     This target does not install anything.  Running this target as a
++     regular user, particularly if the prior ‘make install’ required
++     root privileges, verifies that the installation completed
++     correctly.
++
++  8. You can remove the program binaries and object files from the
++     source code directory by typing ‘make clean’.  To also remove the
++     files that ‘configure’ created (so you can compile the package for
++     a different kind of computer), type ‘make distclean’.  There is
++     also a ‘make maintainer-clean’ target, but that is intended mainly
++     for the package’s developers.  If you use it, you may have to
++     bootstrap again.
++
++  9. If the package follows the GNU Coding Standards, you can type ‘make
++     uninstall’ to remove the installed files.
++
++Compilers and Options
++=====================
++
++   Some systems require unusual options for compilation or linking that
++the ‘configure’ script does not know about.  Run ‘./configure --help’
++for details on some of the pertinent environment variables.
++
++   You can give ‘configure’ initial values for configuration parameters
++by setting variables in the command line or in the environment.  Here is
++an example:
++
++     ./configure CC=gcc CFLAGS=-g LIBS=-lposix
++
++   See “Defining Variables” for more details.
++
++Compiling For Multiple Architectures
++====================================
++
++   You can compile the package for more than one kind of computer at the
++same time, by placing the object files for each system in their own
++directory.  To do this, you can use GNU ‘make’.  ‘cd’ to the directory
++where you want the object files and executables to go and run the
++‘configure’ script.  ‘configure’ automatically checks for the source
++code in the directory that ‘configure’ is in and in ‘..’.  This is known
++as a “VPATH” build.
++
++   With a non-GNU ‘make’, it is safer to compile the package for one
++system at a time in the source code directory.  After you have installed
++the package for one system, use ‘make distclean’ before reconfiguring
++for another system.
++
++   Some platforms, notably macOS, support “fat” or “universal” binaries,
++where a single binary can execute on different architectures.  On these
++platforms you can configure and compile just once, with options specific
++to that platform.
++
++Installation Names
++==================
++
++   By default, ‘make install’ installs the package’s commands under
++‘/usr/local/bin’, include files under ‘/usr/local/include’, etc.  You
++can specify an installation prefix other than ‘/usr/local’ by giving
++‘configure’ the option ‘--prefix=PREFIX’, where PREFIX must be an
++absolute file name.
++
++   You can specify separate installation prefixes for
++architecture-specific files and architecture-independent files.  If you
++pass the option ‘--exec-prefix=PREFIX’ to ‘configure’, the package uses
++PREFIX as the prefix for installing programs and libraries.
++Documentation and other data files still use the regular prefix.
++
++   In addition, if you use an unusual directory layout you can give
++options like ‘--bindir=DIR’ to specify different values for particular
++kinds of files.  Run ‘configure --help’ for a list of the directories
++you can set and what kinds of files go in them.  In general, the default
++for these options is expressed in terms of ‘${prefix}’, so that
++specifying just ‘--prefix’ will affect all of the other directory
++specifications that were not explicitly provided.
++
++   The most portable way to affect installation locations is to pass the
++correct locations to ‘configure’; however, many packages provide one or
++both of the following shortcuts of passing variable assignments to the
++‘make install’ command line to change installation locations without
++having to reconfigure or recompile.
++
++   The first method involves providing an override variable for each
++affected directory.  For example, ‘make install
++prefix=/alternate/directory’ will choose an alternate location for all
++directory configuration variables that were expressed in terms of
++‘${prefix}’.  Any directories that were specified during ‘configure’,
++but not in terms of ‘${prefix}’, must each be overridden at install time
++for the entire installation to be relocated.  The approach of makefile
++variable overrides for each directory variable is required by the GNU
++Coding Standards, and ideally causes no recompilation.  However, some
++platforms have known limitations with the semantics of shared libraries
++that end up requiring recompilation when using this method, particularly
++noticeable in packages that use GNU Libtool.
++
++   The second method involves providing the ‘DESTDIR’ variable.  For
++example, ‘make install DESTDIR=/alternate/directory’ will prepend
++‘/alternate/directory’ before all installation names.  The approach of
++‘DESTDIR’ overrides is not required by the GNU Coding Standards, and
++does not work on platforms that have drive letters.  On the other hand,
++it does better at avoiding recompilation issues, and works well even
++when some directory options were not specified in terms of ‘${prefix}’
++at ‘configure’ time.
++
++Optional Features
++=================
++
++   If the package supports it, you can cause programs to be installed
++with an extra prefix or suffix on their names by giving ‘configure’ the
++option ‘--program-prefix=PREFIX’ or ‘--program-suffix=SUFFIX’.
++
++   Some packages pay attention to ‘--enable-FEATURE’ and
++‘--disable-FEATURE’ options to ‘configure’, where FEATURE indicates an
++optional part of the package.  They may also pay attention to
++‘--with-PACKAGE’ and ‘--without-PACKAGE’ options, where PACKAGE is
++something like ‘gnu-ld’.  ‘./configure --help’ should mention the
++‘--enable-...’ and ‘--with-...’ options that the package recognizes.
++
++   Some packages offer the ability to configure how verbose the
++execution of ‘make’ will be.  For these packages, running ‘./configure
++--enable-silent-rules’ sets the default to minimal output, which can be
++overridden with ‘make V=1’; while running ‘./configure
++--disable-silent-rules’ sets the default to verbose, which can be
++overridden with ‘make V=0’.
++
++Specifying a System Type
++========================
++
++   By default ‘configure’ builds for the current system.  To create
++binaries that can run on a different system type, specify a
++‘--host=TYPE’ option along with compiler variables that specify how to
++generate object code for TYPE.  For example, to create binaries intended
++to run on a 64-bit ARM processor:
++
++     ./configure --host=aarch64-linux-gnu \
++        CC=aarch64-linux-gnu-gcc \
++        CXX=aarch64-linux-gnu-g++
++
++If done on a machine that can execute these binaries (e.g., via
++‘qemu-aarch64’, ‘$QEMU_LD_PREFIX’, and Linux’s ‘binfmt_misc’
++capability), the build behaves like a native build.  Otherwise it is a
++cross-build: ‘configure’ will make cross-compilation guesses instead of
++running test programs, and ‘make check’ will not work.
++
++   A system type can either be a short name like ‘mingw64’, or a
++canonical name like ‘x86_64-pc-linux-gnu’.  Canonical names have the
++form CPU-COMPANY-SYSTEM where SYSTEM is either OS or KERNEL-OS.  To
++canonicalize and validate a system type, you can run the command
++‘config.sub’, which is often squirreled away in a subdirectory like
++‘build-aux’.  For example:
++
++     $ build-aux/config.sub arm64-linux
++     aarch64-unknown-linux-gnu
++     $ build-aux/config.sub riscv-lnx
++     Invalid configuration 'riscv-lnx': OS 'lnx' not recognized
++
++You can look at the ‘config.sub’ file to see which types are recognized.
++If the file is absent, this package does not need the system type.
++
++   If ‘configure’ fails with the diagnostic “cannot guess build type”.
++‘config.sub’ did not recognize your system’s type.  In this case, first
++fetch the newest versions of these files from the GNU config package
++(https://savannah.gnu.org/projects/config).  If that fixes things,
++please report it to the maintainers of the package containing
++‘configure’.  Otherwise, you can try the configure option ‘--build=TYPE’
++where TYPE comes close to your system type; also, please report the
++problem to <config-patches@gnu.org>.
++
++   For more details about configuring system types, see the Autoconf
++documentation.
++
++Sharing Defaults
++================
++
++   If you want to set default values for ‘configure’ scripts to share,
++you can create a site shell script called ‘config.site’ that gives
++default values for variables like ‘CC’, ‘cache_file’, and ‘prefix’.
++‘configure’ looks for ‘PREFIX/share/config.site’ if it exists, then
++‘PREFIX/etc/config.site’ if it exists.  Or, you can set the
++‘CONFIG_SITE’ environment variable to the location of the site script.
++A warning: not all ‘configure’ scripts look for a site script.
++
++Defining Variables
++==================
++
++   Variables not defined in a site shell script can be set in the
++environment passed to ‘configure’.  However, some packages may run
++configure again during the build, and the customized values of these
++variables may be lost.  In order to avoid this problem, you should set
++them in the ‘configure’ command line, using ‘VAR=value’.  For example:
++
++     ./configure CC=/usr/local2/bin/gcc
++
++causes the specified ‘gcc’ to be used as the C compiler (unless it is
++overridden in the site shell script).
++
++Unfortunately, this technique does not work for ‘CONFIG_SHELL’ due to an
++Autoconf limitation.  Until the limitation is lifted, you can use this
++workaround:
++
++     CONFIG_SHELL=/bin/bash ./configure CONFIG_SHELL=/bin/bash
++
++‘configure’ Invocation
++======================
++
++   ‘configure’ recognizes the following options to control how it
++operates.
++
++‘--help’
++‘-h’
++     Print a summary of all of the options to ‘configure’, and exit.
++
++‘--help=short’
++‘--help=recursive’
++     Print a summary of the options unique to this package’s
++     ‘configure’, and exit.  The ‘short’ variant lists options used only
++     in the top level, while the ‘recursive’ variant lists options also
++     present in any nested packages.
++
++‘--version’
++‘-V’
++     Print the version of Autoconf used to generate the ‘configure’
++     script, and exit.
++
++‘--cache-file=FILE’
++     Enable the cache: use and save the results of the tests in FILE,
++     traditionally ‘config.cache’.  FILE defaults to ‘/dev/null’ to
++     disable caching.
++
++‘--config-cache’
++‘-C’
++     Alias for ‘--cache-file=config.cache’.
++
++‘--srcdir=DIR’
++     Look for the package’s source code in directory DIR.  Usually
++     ‘configure’ can determine that directory automatically.
++
++‘--prefix=DIR’
++     Use DIR as the installation prefix.  See “Installation Names” for
++     more details, including other options available for fine-tuning the
++     installation locations.
++
++‘--host=TYPE’
++     Build binaries for system TYPE.  See “Specifying a System Type”.
++
++‘--enable-FEATURE’
++‘--disable-FEATURE’
++     Enable or disable the optional FEATURE.  See “Optional Features”.
++
++‘--with-PACKAGE’
++‘--without-PACKAGE’
++     Use or omit PACKAGE when building.  See “Optional Features”.
++
++‘--quiet’
++‘--silent’
++‘-q’
++     Do not print messages saying which checks are being made.  To
++     suppress all normal output, redirect it to ‘/dev/null’ (any error
++     messages will still be shown).
++
++‘--no-create’
++‘-n’
++     Run the configure checks, but stop before creating any output
++     files.
++
++‘configure’ also recognizes several environment variables, and accepts
++some other, less widely useful, options.  Run ‘configure --help’ for
++more details.
++
++Copyright notice
++================
++
++   Copyright © 1994–1996, 1999–2002, 2004–2017, 2020–2024 Free Software
++Foundation, Inc.
+ 
+    Copying and distribution of this file, with or without modification,
+ are permitted in any medium without royalty provided the copyright
+ notice and this notice are preserved.  This file is offered as-is,
+ without warranty of any kind.
+-
+-Basic Installation
+-==================
+-
+-   Briefly, the shell command `./configure && make && make install'
+-should configure, build, and install this package.  The following
+-more-detailed instructions are generic; see the `README' file for
+-instructions specific to this package.  Some packages provide this
+-`INSTALL' file but do not implement all of the features documented
+-below.  The lack of an optional feature in a given package is not
+-necessarily a bug.  More recommendations for GNU packages can be found
+-in *note Makefile Conventions: (standards)Makefile Conventions.
+-
+-   The `configure' shell script attempts to guess correct values for
+-various system-dependent variables used during compilation.  It uses
+-those values to create a `Makefile' in each directory of the package.
+-It may also create one or more `.h' files containing system-dependent
+-definitions.  Finally, it creates a shell script `config.status' that
+-you can run in the future to recreate the current configuration, and a
+-file `config.log' containing compiler output (useful mainly for
+-debugging `configure').
+-
+-   It can also use an optional file (typically called `config.cache'
+-and enabled with `--cache-file=config.cache' or simply `-C') that saves
+-the results of its tests to speed up reconfiguring.  Caching is
+-disabled by default to prevent problems with accidental use of stale
+-cache files.
+-
+-   If you need to do unusual things to compile the package, please try
+-to figure out how `configure' could check whether to do them, and mail
+-diffs or instructions to the address given in the `README' so they can
+-be considered for the next release.  If you are using the cache, and at
+-some point `config.cache' contains results you don't want to keep, you
+-may remove or edit it.
+-
+-   The file `configure.ac' (or `configure.in') is used to create
+-`configure' by a program called `autoconf'.  You need `configure.ac' if
+-you want to change it or regenerate `configure' using a newer version
+-of `autoconf'.
+-
+-   The simplest way to compile this package is:
+-
+-  1. `cd' to the directory containing the package's source code and type
+-     `./configure' to configure the package for your system.
+-
+-     Running `configure' might take a while.  While running, it prints
+-     some messages telling which features it is checking for.
+-
+-  2. Type `make' to compile the package.
+-
+-  3. Optionally, type `make check' to run any self-tests that come with
+-     the package, generally using the just-built uninstalled binaries.
+-
+-  4. Type `make install' to install the programs and any data files and
+-     documentation.  When installing into a prefix owned by root, it is
+-     recommended that the package be configured and built as a regular
+-     user, and only the `make install' phase executed with root
+-     privileges.
+-
+-  5. Optionally, type `make installcheck' to repeat any self-tests, but
+-     this time using the binaries in their final installed location.
+-     This target does not install anything.  Running this target as a
+-     regular user, particularly if the prior `make install' required
+-     root privileges, verifies that the installation completed
+-     correctly.
+-
+-  6. You can remove the program binaries and object files from the
+-     source code directory by typing `make clean'.  To also remove the
+-     files that `configure' created (so you can compile the package for
+-     a different kind of computer), type `make distclean'.  There is
+-     also a `make maintainer-clean' target, but that is intended mainly
+-     for the package's developers.  If you use it, you may have to get
+-     all sorts of other programs in order to regenerate files that came
+-     with the distribution.
+-
+-  7. Often, you can also type `make uninstall' to remove the installed
+-     files again.  In practice, not all packages have tested that
+-     uninstallation works correctly, even though it is required by the
+-     GNU Coding Standards.
+-
+-  8. Some packages, particularly those that use Automake, provide `make
+-     distcheck', which can by used by developers to test that all other
+-     targets like `make install' and `make uninstall' work correctly.
+-     This target is generally not run by end users.
+-
+-Compilers and Options
+-=====================
+-
+-   Some systems require unusual options for compilation or linking that
+-the `configure' script does not know about.  Run `./configure --help'
+-for details on some of the pertinent environment variables.
+-
+-   You can give `configure' initial values for configuration parameters
+-by setting variables in the command line or in the environment.  Here
+-is an example:
+-
+-     ./configure CC=c99 CFLAGS=-g LIBS=-lposix
+-
+-   *Note Defining Variables::, for more details.
+-
+-Compiling For Multiple Architectures
+-====================================
+-
+-   You can compile the package for more than one kind of computer at the
+-same time, by placing the object files for each architecture in their
+-own directory.  To do this, you can use GNU `make'.  `cd' to the
+-directory where you want the object files and executables to go and run
+-the `configure' script.  `configure' automatically checks for the
+-source code in the directory that `configure' is in and in `..'.  This
+-is known as a "VPATH" build.
+-
+-   With a non-GNU `make', it is safer to compile the package for one
+-architecture at a time in the source code directory.  After you have
+-installed the package for one architecture, use `make distclean' before
+-reconfiguring for another architecture.
+-
+-   On MacOS X 10.5 and later systems, you can create libraries and
+-executables that work on multiple system types--known as "fat" or
+-"universal" binaries--by specifying multiple `-arch' options to the
+-compiler but only a single `-arch' option to the preprocessor.  Like
+-this:
+-
+-     ./configure CC="gcc -arch i386 -arch x86_64 -arch ppc -arch ppc64" \
+-                 CXX="g++ -arch i386 -arch x86_64 -arch ppc -arch ppc64" \
+-                 CPP="gcc -E" CXXCPP="g++ -E"
+-
+-   This is not guaranteed to produce working output in all cases, you
+-may have to build one architecture at a time and combine the results
+-using the `lipo' tool if you have problems.
+-
+-Installation Names
+-==================
+-
+-   By default, `make install' installs the package's commands under
+-`/usr/local/bin', include files under `/usr/local/include', etc.  You
+-can specify an installation prefix other than `/usr/local' by giving
+-`configure' the option `--prefix=PREFIX', where PREFIX must be an
+-absolute file name.
+-
+-   You can specify separate installation prefixes for
+-architecture-specific files and architecture-independent files.  If you
+-pass the option `--exec-prefix=PREFIX' to `configure', the package uses
+-PREFIX as the prefix for installing programs and libraries.
+-Documentation and other data files still use the regular prefix.
+-
+-   In addition, if you use an unusual directory layout you can give
+-options like `--bindir=DIR' to specify different values for particular
+-kinds of files.  Run `configure --help' for a list of the directories
+-you can set and what kinds of files go in them.  In general, the
+-default for these options is expressed in terms of `${prefix}', so that
+-specifying just `--prefix' will affect all of the other directory
+-specifications that were not explicitly provided.
+-
+-   The most portable way to affect installation locations is to pass the
+-correct locations to `configure'; however, many packages provide one or
+-both of the following shortcuts of passing variable assignments to the
+-`make install' command line to change installation locations without
+-having to reconfigure or recompile.
+-
+-   The first method involves providing an override variable for each
+-affected directory.  For example, `make install
+-prefix=/alternate/directory' will choose an alternate location for all
+-directory configuration variables that were expressed in terms of
+-`${prefix}'.  Any directories that were specified during `configure',
+-but not in terms of `${prefix}', must each be overridden at install
+-time for the entire installation to be relocated.  The approach of
+-makefile variable overrides for each directory variable is required by
+-the GNU Coding Standards, and ideally causes no recompilation.
+-However, some platforms have known limitations with the semantics of
+-shared libraries that end up requiring recompilation when using this
+-method, particularly noticeable in packages that use GNU Libtool.
+-
+-   The second method involves providing the `DESTDIR' variable.  For
+-example, `make install DESTDIR=/alternate/directory' will prepend
+-`/alternate/directory' before all installation names.  The approach of
+-`DESTDIR' overrides is not required by the GNU Coding Standards, and
+-does not work on platforms that have drive letters.  On the other hand,
+-it does better at avoiding recompilation issues, and works well even
+-when some directory options were not specified in terms of `${prefix}'
+-at `configure' time.
+-
+-Optional Features
+-=================
+-
+-   If the package supports it, you can cause programs to be installed
+-with an extra prefix or suffix on their names by giving `configure' the
+-option `--program-prefix=PREFIX' or `--program-suffix=SUFFIX'.
+-
+-   Some packages pay attention to `--enable-FEATURE' options to
+-`configure', where FEATURE indicates an optional part of the package.
+-They may also pay attention to `--with-PACKAGE' options, where PACKAGE
+-is something like `gnu-as' or `x' (for the X Window System).  The
+-`README' should mention any `--enable-' and `--with-' options that the
+-package recognizes.
+-
+-   For packages that use the X Window System, `configure' can usually
+-find the X include and library files automatically, but if it doesn't,
+-you can use the `configure' options `--x-includes=DIR' and
+-`--x-libraries=DIR' to specify their locations.
+-
+-   Some packages offer the ability to configure how verbose the
+-execution of `make' will be.  For these packages, running `./configure
+---enable-silent-rules' sets the default to minimal output, which can be
+-overridden with `make V=1'; while running `./configure
+---disable-silent-rules' sets the default to verbose, which can be
+-overridden with `make V=0'.
+-
+-Particular systems
+-==================
+-
+-   On HP-UX, the default C compiler is not ANSI C compatible.  If GNU
+-CC is not installed, it is recommended to use the following options in
+-order to use an ANSI C compiler:
+-
+-     ./configure CC="cc -Ae -D_XOPEN_SOURCE=500"
+-
+-and if that doesn't work, install pre-built binaries of GCC for HP-UX.
+-
+-   HP-UX `make' updates targets which have the same time stamps as
+-their prerequisites, which makes it generally unusable when shipped
+-generated files such as `configure' are involved.  Use GNU `make'
+-instead.
+-
+-   On OSF/1 a.k.a. Tru64, some versions of the default C compiler cannot
+-parse its `<wchar.h>' header file.  The option `-nodtk' can be used as
+-a workaround.  If GNU CC is not installed, it is therefore recommended
+-to try
+-
+-     ./configure CC="cc"
+-
+-and if that doesn't work, try
+-
+-     ./configure CC="cc -nodtk"
+-
+-   On Solaris, don't put `/usr/ucb' early in your `PATH'.  This
+-directory contains several dysfunctional programs; working variants of
+-these programs are available in `/usr/bin'.  So, if you need `/usr/ucb'
+-in your `PATH', put it _after_ `/usr/bin'.
+-
+-   On Haiku, software installed for all users goes in `/boot/common',
+-not `/usr/local'.  It is recommended to use the following options:
+-
+-     ./configure --prefix=/boot/common
+-
+-Specifying the System Type
+-==========================
+-
+-   There may be some features `configure' cannot figure out
+-automatically, but needs to determine by the type of machine the package
+-will run on.  Usually, assuming the package is built to be run on the
+-_same_ architectures, `configure' can figure that out, but if it prints
+-a message saying it cannot guess the machine type, give it the
+-`--build=TYPE' option.  TYPE can either be a short name for the system
+-type, such as `sun4', or a canonical name which has the form:
+-
+-     CPU-COMPANY-SYSTEM
+-
+-where SYSTEM can have one of these forms:
+-
+-     OS
+-     KERNEL-OS
+-
+-   See the file `config.sub' for the possible values of each field.  If
+-`config.sub' isn't included in this package, then this package doesn't
+-need to know the machine type.
+-
+-   If you are _building_ compiler tools for cross-compiling, you should
+-use the option `--target=TYPE' to select the type of system they will
+-produce code for.
+-
+-   If you want to _use_ a cross compiler, that generates code for a
+-platform different from the build platform, you should specify the
+-"host" platform (i.e., that on which the generated programs will
+-eventually be run) with `--host=TYPE'.
+-
+-Sharing Defaults
+-================
+-
+-   If you want to set default values for `configure' scripts to share,
+-you can create a site shell script called `config.site' that gives
+-default values for variables like `CC', `cache_file', and `prefix'.
+-`configure' looks for `PREFIX/share/config.site' if it exists, then
+-`PREFIX/etc/config.site' if it exists.  Or, you can set the
+-`CONFIG_SITE' environment variable to the location of the site script.
+-A warning: not all `configure' scripts look for a site script.
+-
+-Defining Variables
+-==================
+-
+-   Variables not defined in a site shell script can be set in the
+-environment passed to `configure'.  However, some packages may run
+-configure again during the build, and the customized values of these
+-variables may be lost.  In order to avoid this problem, you should set
+-them in the `configure' command line, using `VAR=value'.  For example:
+-
+-     ./configure CC=/usr/local2/bin/gcc
+-
+-causes the specified `gcc' to be used as the C compiler (unless it is
+-overridden in the site shell script).
+-
+-Unfortunately, this technique does not work for `CONFIG_SHELL' due to
+-an Autoconf limitation.  Until the limitation is lifted, you can use
+-this workaround:
+-
+-     CONFIG_SHELL=/bin/bash ./configure CONFIG_SHELL=/bin/bash
+-
+-`configure' Invocation
+-======================
+-
+-   `configure' recognizes the following options to control how it
+-operates.
+-
+-`--help'
+-`-h'
+-     Print a summary of all of the options to `configure', and exit.
+-
+-`--help=short'
+-`--help=recursive'
+-     Print a summary of the options unique to this package's
+-     `configure', and exit.  The `short' variant lists options used
+-     only in the top level, while the `recursive' variant lists options
+-     also present in any nested packages.
+-
+-`--version'
+-`-V'
+-     Print the version of Autoconf used to generate the `configure'
+-     script, and exit.
+-
+-`--cache-file=FILE'
+-     Enable the cache: use and save the results of the tests in FILE,
+-     traditionally `config.cache'.  FILE defaults to `/dev/null' to
+-     disable caching.
+-
+-`--config-cache'
+-`-C'
+-     Alias for `--cache-file=config.cache'.
+-
+-`--quiet'
+-`--silent'
+-`-q'
+-     Do not print messages saying which checks are being made.  To
+-     suppress all normal output, redirect it to `/dev/null' (any error
+-     messages will still be shown).
+-
+-`--srcdir=DIR'
+-     Look for the package's source code in directory DIR.  Usually
+-     `configure' can determine that directory automatically.
+-
+-`--prefix=DIR'
+-     Use DIR as the installation prefix.  *note Installation Names::
+-     for more details, including other options available for fine-tuning
+-     the installation locations.
+-
+-`--no-create'
+-`-n'
+-     Run the configure checks, but stop before creating any output
+-     files.
+-
+-`configure' also accepts some other, not widely useful, options.  Run
+-`configure --help' for more details.
